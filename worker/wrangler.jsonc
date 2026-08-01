@@ -10,6 +10,9 @@
       "database_id": "b08d0369-11b4-457a-9704-687aa7daae71"
     }
   ],
+  "ai": {
+    "binding": "AI"
+  },
   "send_email": [
     {
       "name": "EMAIL",
