@@ -7,7 +7,7 @@
     {
       "binding": "DB",
       "database_name": "liferise-leads",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID"
+      "database_id": "b08d0369-11b4-457a-9704-687aa7daae71"
     }
   ],
   "send_email": [
