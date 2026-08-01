@@ -81,11 +81,18 @@ async function loadDashboard(){
   filterStatus.textContent=`Showing ${fmt(data.range?.from)} through ${fmt(data.range?.to)}${data.range?.page?` for ${data.range.page}`:''}.`;
 }
 
-function resetRange(){
+function setRange(hours){
   const now=new Date();
   filterTo.value=toLocalInput(now);
-  filterFrom.value=toLocalInput(new Date(now.getTime()-30*86400000));
+  filterFrom.value=toLocalInput(new Date(now.getTime()-hours*60*60*1000));
   filterPage.value='';
+}
+
+function resetRange(){setRange(30*24);}
+
+async function applyQuickRange(hours){
+  setRange(hours);
+  await loadDashboard().catch(error=>{filterStatus.textContent=error.message;});
 }
 
 loginForm.addEventListener('submit',async event=>{
@@ -100,7 +107,9 @@ loginForm.addEventListener('submit',async event=>{
 $('[data-admin-logout]').addEventListener('click',async()=>{try{await api('/api/admin/logout',{method:'POST',body:'{}'});}finally{showLogin();}});
 
 filterForm.addEventListener('submit',async event=>{event.preventDefault();await loadDashboard().catch(error=>{filterStatus.textContent=error.message;});});
-$('[data-filter-reset]').addEventListener('click',async()=>{resetRange();await loadDashboard().catch(error=>{filterStatus.textContent=error.message;});});
+$('[data-filter-24h]').addEventListener('click',()=>applyQuickRange(24));
+$('[data-filter-12h]').addEventListener('click',()=>applyQuickRange(12));
+$('[data-filter-reset]').addEventListener('click',()=>applyQuickRange(30*24));
 
 search.addEventListener('input',()=>{
   const q=search.value.trim().toLowerCase();
