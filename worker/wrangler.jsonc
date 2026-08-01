@@ -3,6 +3,13 @@
   "name": "liferise-form-api",
   "main": "src/index.js",
   "compatibility_date": "2026-07-31",
+  "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "liferise.cc/api/*",
+      "zone_name": "liferise.cc"
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
