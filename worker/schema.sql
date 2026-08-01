@@ -13,14 +13,41 @@ CREATE TABLE IF NOT EXISTS coaching_leads (
   contacted_at TEXT,
   updated_at TEXT,
   ip_address TEXT,
-  user_agent TEXT
+  user_agent TEXT,
+  lead_source TEXT DEFAULT 'contact_form',
+  preferred_contact TEXT,
+  best_contact_time TEXT,
+  chat_summary TEXT,
+  sms_consent INTEGER DEFAULT 0,
+  conversation_id TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_coaching_leads_status
-  ON coaching_leads(status);
+CREATE TABLE IF NOT EXISTS chat_conversations (
+  id TEXT PRIMARY KEY,
+  stage TEXT NOT NULL DEFAULT 'collecting',
+  name TEXT,
+  email TEXT,
+  phone TEXT,
+  area TEXT,
+  concern TEXT,
+  preferred_contact TEXT,
+  best_contact_time TEXT,
+  sms_consent INTEGER DEFAULT 0,
+  lead_id INTEGER,
+  summary TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 
-CREATE INDEX IF NOT EXISTS idx_coaching_leads_submitted_at
-  ON coaching_leads(submitted_at DESC);
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 
-CREATE INDEX IF NOT EXISTS idx_coaching_leads_email
-  ON coaching_leads(email);
+CREATE INDEX IF NOT EXISTS idx_coaching_leads_status ON coaching_leads(status);
+CREATE INDEX IF NOT EXISTS idx_coaching_leads_submitted_at ON coaching_leads(submitted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_coaching_leads_email ON coaching_leads(email);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, created_at);
