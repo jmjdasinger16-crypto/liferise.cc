@@ -133,17 +133,44 @@ export default {
       if (!(await isAdmin(request, env))) return json({ error: "Unauthorized." }, 401);
 
       if (request.method === "GET" && url.pathname === "/api/admin/dashboard") {
-        const since30 = new Date(Date.now() - 30 * 86400000).toISOString();
+        const now = new Date();
+        const defaultFrom = new Date(now.getTime() - 30 * 86400000);
+        const fromRaw = url.searchParams.get("from");
+        const toRaw = url.searchParams.get("to");
+        const page = clean(url.searchParams.get("page"), 500);
+        const fromDate = fromRaw ? new Date(fromRaw) : defaultFrom;
+        const toDate = toRaw ? new Date(toRaw) : now;
+        if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) return json({ error: "Invalid date range." }, 400);
+        if (fromDate > toDate) return json({ error: "The start date must be before the end date." }, 400);
+        const from = fromDate.toISOString();
+        const to = toDate.toISOString();
+        const pageClause = page ? " AND page_path = ?" : "";
+        const eventBindings = page ? [from, to, page] : [from, to];
+
         const metrics = await env.DB.prepare(`SELECT
           SUM(CASE WHEN event_name='page_view' THEN 1 ELSE 0 END) visits,
           COUNT(DISTINCT CASE WHEN event_name='page_view' THEN session_id END) unique_visitors,
           SUM(CASE WHEN event_name='chatbot_open' THEN 1 ELSE 0 END) chatbot_opens,
           SUM(CASE WHEN event_name='stripe_click' THEN 1 ELSE 0 END) stripe_clicks
-          FROM site_events WHERE occurred_at >= ?`).bind(since30).first();
-        const leadCount = await env.DB.prepare("SELECT COUNT(*) total FROM coaching_leads WHERE submitted_at >= ?").bind(since30).first();
-        const leads = await env.DB.prepare(`SELECT id,name,email,phone,area,message,comfort,status,assigned_representative,representative_notes,next_follow_up_at,submitted_at,contacted_at,updated_at,lead_source,preferred_contact,best_contact_time,chat_summary,sms_consent,conversation_id FROM coaching_leads ORDER BY submitted_at DESC LIMIT 250`).all();
-        const events = await env.DB.prepare(`SELECT id,event_name,page_path,session_id,lead_id,conversation_id,metadata,occurred_at FROM site_events ORDER BY occurred_at DESC LIMIT 200`).all();
-        return json({ metrics: { ...metrics, leads: leadCount?.total || 0 }, leads: leads.results || [], events: events.results || [] });
+          FROM site_events WHERE occurred_at >= ? AND occurred_at <= ?${pageClause}`).bind(...eventBindings).first();
+        const leadCount = await env.DB.prepare("SELECT COUNT(*) total FROM coaching_leads WHERE submitted_at >= ? AND submitted_at <= ?").bind(from, to).first();
+        const leads = await env.DB.prepare(`SELECT id,name,email,phone,area,message,comfort,status,assigned_representative,representative_notes,next_follow_up_at,submitted_at,contacted_at,updated_at,lead_source,preferred_contact,best_contact_time,chat_summary,sms_consent,conversation_id FROM coaching_leads WHERE submitted_at >= ? AND submitted_at <= ? ORDER BY submitted_at DESC LIMIT 250`).bind(from, to).all();
+        const events = await env.DB.prepare(`SELECT id,event_name,page_path,session_id,lead_id,conversation_id,metadata,occurred_at FROM site_events WHERE occurred_at >= ? AND occurred_at <= ?${pageClause} ORDER BY occurred_at DESC LIMIT 500`).bind(...eventBindings).all();
+        const pages = await env.DB.prepare(`SELECT page_path,
+          SUM(CASE WHEN event_name='page_view' THEN 1 ELSE 0 END) views,
+          COUNT(DISTINCT CASE WHEN event_name='page_view' THEN session_id END) unique_visitors,
+          MAX(occurred_at) last_activity
+          FROM site_events WHERE occurred_at >= ? AND occurred_at <= ? AND page_path IS NOT NULL AND page_path <> ''${pageClause}
+          GROUP BY page_path ORDER BY views DESC, last_activity DESC`).bind(...eventBindings).all();
+        const pagePaths = await env.DB.prepare("SELECT DISTINCT page_path FROM site_events WHERE page_path IS NOT NULL AND page_path <> '' ORDER BY page_path").all();
+        return json({
+          metrics: { ...metrics, leads: leadCount?.total || 0 },
+          pages: pages.results || [],
+          page_paths: (pagePaths.results || []).map(row => row.page_path),
+          leads: leads.results || [],
+          events: events.results || [],
+          range: { from, to, page: page || null }
+        });
       }
 
       const leadMatch = url.pathname.match(/^\/api\/admin\/leads\/(\d+)$/);
@@ -188,39 +215,45 @@ export default {
       if (userMessage) await saveMessage(env, conversationId, "user", userMessage);
 
       if (c.stage === "closing" || c.stage === "follow_up") {
-        const ai = await aiClose(env, c, userMessage || "Please explain the trial.");
-        await env.DB.prepare("UPDATE chat_conversations SET stage=?,updated_at=? WHERE id=?").bind(ai.stage,now,conversationId).run();
+        const ai = await aiClose(env, c, userMessage);
         await saveMessage(env, conversationId, "assistant", ai.reply);
-        return json({ conversation_id: conversationId, reply: ai.reply, stage: ai.stage, show_checkout: ai.show_checkout, checkout_url: ai.show_checkout ? STRIPE_URL : null });
+        await env.DB.prepare("UPDATE chat_conversations SET stage=?,updated_at=? WHERE id=?").bind(ai.stage,now,conversationId).run();
+        return json({ conversation_id: conversationId, reply: ai.reply, options: [], lead_saved: Boolean(c.lead_id), show_checkout: ai.show_checkout, checkout_url: STRIPE_URL, stage: ai.stage });
       }
 
-      if (body.field && userMessage) {
-        const field = clean(body.field,40);
-        const allowed = ["area","concern","name","phone","email","preferred_contact","best_contact_time","sms_consent"];
-        if (allowed.includes(field)) {
-          let value = userMessage;
-          if (field === "email") { value = value.toLowerCase(); if (!validEmail(value)) return json({ conversation_id: conversationId, reply: "Please enter a valid email address.", field: "email" }, 400); }
-          if (field === "phone" && !validPhone(value)) return json({ conversation_id: conversationId, reply: "Please enter a valid phone number including area code.", field: "phone" }, 400);
-          if (field === "sms_consent") value = /agree/i.test(value) ? 1 : 0;
-          await env.DB.prepare(`UPDATE chat_conversations SET ${field}=?,updated_at=? WHERE id=?`).bind(value,now,conversationId).run();
-          c[field] = value;
+      const expected = nextPrompt(c);
+      if (!expected) return json({ conversation_id: conversationId, reply: "Your information has been saved. A LifeRise representative will reach out soon.", lead_saved: Boolean(c.lead_id), show_checkout: true, checkout_url: STRIPE_URL, stage: "closing" });
+
+      if (userMessage) {
+        let accepted = true; let value = userMessage;
+        if (expected.field === "email") { value = userMessage.toLowerCase(); accepted = validEmail(value); }
+        if (expected.field === "phone") accepted = validPhone(userMessage);
+        if (!accepted) {
+          const reply = expected.field === "email" ? "Please enter a valid email address." : "Please enter a valid phone number with at least 10 digits.";
+          await saveMessage(env, conversationId, "assistant", reply); return json({ conversation_id: conversationId, reply, field: expected.field });
         }
+        if (expected.field === "sms_consent") value = userMessage.toLowerCase().includes("agree") ? 1 : 2;
+        await env.DB.prepare(`UPDATE chat_conversations SET ${expected.field}=?,updated_at=? WHERE id=?`).bind(value,now,conversationId).run();
+        c[expected.field] = value;
       }
 
-      const prompt = nextPrompt(c);
-      if (prompt) { await saveMessage(env, conversationId, "assistant", prompt.reply); return json({ conversation_id: conversationId, stage: "collecting", ...prompt }); }
-
-      if (!c.lead_id) {
-        const summary = `${c.name} is seeking help with ${c.area}. Main concern: ${c.concern}`;
-        const lead = { ...c, summary, conversation_id: conversationId, lead_source: "chatbot" };
+      const next = nextPrompt(c);
+      if (!next && !c.lead_id) {
+        const smsConsent = c.sms_consent === 1;
+        const summary = `${c.area}: ${c.concern}`;
+        const lead = { name:c.name,email:c.email,phone:c.phone,area:c.area,concern:c.concern,preferred_contact:c.preferred_contact,best_contact_time:c.best_contact_time,summary,sms_consent:smsConsent,conversation_id:conversationId };
         const leadId = await saveLead(env, request, lead, "chatbot");
         await env.DB.prepare("UPDATE chat_conversations SET lead_id=?,summary=?,stage='closing',updated_at=? WHERE id=?").bind(leadId,summary,now,conversationId).run();
         c.lead_id = leadId; c.summary = summary; c.stage = "closing";
         ctx.waitUntil(Promise.all([notify(env, lead), saveEvent(env, request, { event_name: "lead_submitted", page_path: clean(body.page_path,500), session_id: clean(body.session_id,120), lead_id: leadId, conversation_id: conversationId, metadata: { source: "chatbot" } })]));
       }
-      const ai = await aiClose(env, c, "The lead information has just been saved. Introduce the trial naturally.");
-      await saveMessage(env, conversationId, "assistant", ai.reply);
-      return json({ conversation_id: conversationId, lead_saved: true, lead_id: c.lead_id, reply: ai.reply, stage: "closing", show_checkout: ai.show_checkout, checkout_url: ai.show_checkout ? STRIPE_URL : null });
+      if (!next) {
+        const ai = await aiClose(env, c, "The lead information has just been saved. Introduce the trial naturally.");
+        await saveMessage(env, conversationId, "assistant", ai.reply);
+        return json({ conversation_id: conversationId, reply: ai.reply, options: [], lead_saved: true, show_checkout: ai.show_checkout, checkout_url: STRIPE_URL, stage: ai.stage });
+      }
+      await saveMessage(env, conversationId, "assistant", next.reply);
+      return json({ conversation_id: conversationId, reply: next.reply, options: next.options || [], field: next.field, lead_saved: Boolean(c.lead_id), show_checkout: false });
     }
 
     return json({ error: "Not found" }, 404);
