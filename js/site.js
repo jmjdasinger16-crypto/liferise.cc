@@ -1,7 +1,14 @@
 document.querySelectorAll('a[href^="#"]').forEach(link=>{link.addEventListener('click',event=>{const target=document.querySelector(link.getAttribute('href'));if(target){event.preventDefault();target.scrollIntoView({behavior:'smooth'});}})});
 
+const getSessionId=()=>{let id=localStorage.getItem('liferise_session_id');if(!id){id=(crypto.randomUUID?crypto.randomUUID():`${Date.now()}-${Math.random()}`);localStorage.setItem('liferise_session_id',id);}return id;};
+const sessionId=getSessionId();
+const track=(eventName,metadata={})=>fetch('/api/events',{method:'POST',headers:{'content-type':'application/json'},keepalive:true,body:JSON.stringify({event_name:eventName,page_path:location.pathname+location.search,session_id:sessionId,conversation_id:localStorage.getItem('liferise_conversation_id')||'',metadata})}).catch(()=>{});
+track('page_view',{title:document.title,referrer:document.referrer||''});
+
+document.addEventListener('click',event=>{const link=event.target.closest('a[href*="buy.stripe.com"]');if(link)track('stripe_click',{placement:link.textContent.trim()});});
+
 const form=document.querySelector('[data-coach-form]');
-if(form){form.addEventListener('submit',async event=>{event.preventDefault();const message=document.querySelector('[data-form-message]');const paymentNextStep=document.querySelector('[data-payment-next-step]');const button=form.querySelector('button[type="submit"]');const originalText=button.textContent;message.hidden=false;message.textContent='Sending your request...';if(paymentNextStep){paymentNextStep.hidden=true;}button.disabled=true;button.textContent='Sending...';try{const payload=Object.fromEntries(new FormData(form).entries());const response=await fetch('/api/leads',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});const result=await response.json().catch(()=>({}));if(!response.ok){throw new Error(result.error||'We could not submit your request. Please try again.');}message.textContent=result.message||'Thank you. Your request has been received and a LifeRise representative will contact you soon.';if(paymentNextStep){paymentNextStep.hidden=false;}form.reset();}catch(error){message.textContent=error.message||'We could not submit your request. Please call (806) 319-5785 or email support@liferise.cc.';}finally{button.disabled=false;button.textContent=originalText;}});}
+if(form){form.addEventListener('submit',async event=>{event.preventDefault();track('form_submit_attempt');const message=document.querySelector('[data-form-message]');const paymentNextStep=document.querySelector('[data-payment-next-step]');const button=form.querySelector('button[type="submit"]');const originalText=button.textContent;message.hidden=false;message.textContent='Sending your request...';if(paymentNextStep){paymentNextStep.hidden=true;}button.disabled=true;button.textContent='Sending...';try{const payload=Object.fromEntries(new FormData(form).entries());payload.page_path=location.pathname+location.search;payload.session_id=sessionId;const response=await fetch('/api/leads',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});const result=await response.json().catch(()=>({}));if(!response.ok){throw new Error(result.error||'We could not submit your request. Please try again.');}message.textContent=result.message||'Thank you. Your request has been received and a LifeRise representative will contact you soon.';if(paymentNextStep){paymentNextStep.hidden=false;}form.reset();}catch(error){track('form_submit_error',{message:error.message||'Unknown error'});message.textContent=error.message||'We could not submit your request. Please call (806) 319-5785 or email support@liferise.cc.';}finally{button.disabled=false;button.textContent=originalText;}});}
 
 (function(){
   const markup=`<button class="lr-chat-toggle" type="button" aria-expanded="false">Chat with LifeRise</button><section class="lr-chat" aria-label="LifeRise virtual assistant"><div class="lr-chat-head"><strong>LifeRise Assistant</strong><button class="lr-chat-close" type="button" aria-label="Close chat">×</button></div><div class="lr-chat-log" aria-live="polite"></div><form class="lr-chat-form"><input type="text" autocomplete="off" placeholder="Type your answer..." required><button type="submit">Send</button></form><div class="lr-disclosure">I’m a virtual assistant. LifeRise provides lifestyle coaching—not medical, mental-health, legal, or financial professional services.</div></section>`;
@@ -24,7 +31,7 @@ if(form){form.addEventListener('submit',async event=>{event.preventDefault();con
     if(message){add(message,'user');input.value='';}
     chatForm.querySelector('button').disabled=true;
     try{
-      const response=await fetch('/api/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({conversation_id:conversationId,message,field:activeField})});
+      const response=await fetch('/api/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({conversation_id:conversationId,message,field:activeField,page_path:location.pathname+location.search,session_id:sessionId})});
       const data=await response.json().catch(()=>({}));
       if(data.conversation_id){conversationId=data.conversation_id;localStorage.setItem('liferise_conversation_id',conversationId);}
       if(!response.ok){add(data.reply||data.error||'Please try that again.');activeField=data.field||activeField;return;}
@@ -36,7 +43,7 @@ if(form){form.addEventListener('submit',async event=>{event.preventDefault();con
     finally{chatForm.querySelector('button').disabled=false;input.focus();}
   }
 
-  const open=()=>{panel.classList.add('open');toggle.setAttribute('aria-expanded','true');if(!started){started=true;add('Hi, I’m the LifeRise virtual assistant. I can help you find the right place to begin.');send('');}input.focus();};
+  const open=()=>{panel.classList.add('open');toggle.setAttribute('aria-expanded','true');track('chatbot_open');if(!started){started=true;add('Hi, I’m the LifeRise virtual assistant. I can help you find the right place to begin.');send('');}input.focus();};
   const shut=()=>{panel.classList.remove('open');toggle.setAttribute('aria-expanded','false');};
   toggle.addEventListener('click',()=>panel.classList.contains('open')?shut():open());
   close.addEventListener('click',shut);
