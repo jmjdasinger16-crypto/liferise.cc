@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>LifeRise Admin</title>
+  <meta name="robots" content="noindex,nofollow">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+  <main class="admin-shell">
+    <section class="login-card" data-admin-login>
+      <div class="admin-brand"><span class="brand-dot"></span><strong>LifeRise Admin</strong></div>
+      <h1>Secure dashboard</h1>
+      <p>Enter your admin password to view analytics, events, and CRM data.</p>
+      <form data-admin-login-form>
+        <label for="adminPassword">Password</label>
+        <input id="adminPassword" name="password" type="password" autocomplete="current-password" required>
+        <button type="submit">Sign in</button>
+        <p class="form-message" data-admin-login-message hidden></p>
+      </form>
+    </section>
+
+    <section class="dashboard" data-admin-dashboard hidden>
+      <header class="dashboard-header">
+        <div>
+          <div class="admin-brand"><span class="brand-dot"></span><strong>LifeRise Admin</strong></div>
+          <p>Website analytics and lead management</p>
+        </div>
+        <button class="secondary" type="button" data-admin-logout>Log out</button>
+      </header>
+
+      <section class="metric-grid" data-admin-metrics></section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div><h2>Leads</h2><p>Search, review, and update coaching leads.</p></div>
+          <input type="search" placeholder="Search name, email, phone..." data-lead-search>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Name</th><th>Contact</th><th>Area</th><th>Source</th><th>Status</th><th>Submitted</th><th></th></tr></thead>
+            <tbody data-leads-table></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><div><h2>Recent events</h2><p>Page views, chatbot activity, lead submissions, and Stripe clicks.</p></div></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Event</th><th>Page</th><th>Session</th><th>Time</th></tr></thead>
+            <tbody data-events-table></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <dialog data-lead-dialog>
+    <form method="dialog" class="dialog-card">
+      <button class="dialog-close" value="cancel" aria-label="Close">×</button>
+      <h2 data-lead-title>Lead details</h2>
+      <div class="detail-grid" data-lead-details></div>
+      <label>Status<select data-lead-status><option value="new">New</option><option value="contacted">Contacted</option><option value="trial">Trial</option><option value="active">Active</option><option value="closed">Closed</option></select></label>
+      <label>Assigned representative<input data-lead-assigned></label>
+      <label>Next follow-up<input type="datetime-local" data-lead-follow-up></label>
+      <label>Internal notes<textarea rows="5" data-lead-notes></textarea></label>
+      <button type="button" data-lead-save>Save changes</button>
+      <p class="form-message" data-lead-save-message hidden></p>
+    </form>
+  </dialog>
+
+  <script src="js/admin.js"></script>
+</body>
+</html>
