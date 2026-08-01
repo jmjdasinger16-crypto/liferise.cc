@@ -33,11 +33,41 @@
         <button class="secondary" type="button" data-admin-logout>Log out</button>
       </header>
 
+      <section class="panel filter-panel">
+        <div class="panel-head">
+          <div><h2>Reporting window</h2><p>Choose the exact date and time range used for metrics, page activity, leads, and events.</p></div>
+        </div>
+        <form class="filter-grid" data-dashboard-filter>
+          <label>From<input type="datetime-local" data-filter-from></label>
+          <label>To<input type="datetime-local" data-filter-to></label>
+          <label>Page
+            <select data-filter-page>
+              <option value="">All pages</option>
+            </select>
+          </label>
+          <div class="filter-actions">
+            <button type="submit">Apply filters</button>
+            <button class="secondary" type="button" data-filter-reset>Last 30 days</button>
+          </div>
+          <p class="filter-status" data-filter-status></p>
+        </form>
+      </section>
+
       <section class="metric-grid" data-admin-metrics></section>
 
       <section class="panel">
+        <div class="panel-head"><div><h2>Page performance</h2><p>Every page path recorded by the site, including resource articles, is summarized here.</p></div></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Page</th><th>Views</th><th>Unique visitors</th><th>Last activity</th></tr></thead>
+            <tbody data-pages-table></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
         <div class="panel-head">
-          <div><h2>Leads</h2><p>Search, review, and update coaching leads.</p></div>
+          <div><h2>Leads</h2><p>Search, review, and update coaching leads in the selected reporting window.</p></div>
           <input type="search" placeholder="Search name, email, phone..." data-lead-search>
         </div>
         <div class="table-wrap">
@@ -49,7 +79,7 @@
       </section>
 
       <section class="panel">
-        <div class="panel-head"><div><h2>Recent events</h2><p>Page views, chatbot activity, lead submissions, and Stripe clicks.</p></div></div>
+        <div class="panel-head"><div><h2>Events</h2><p>Page views, chatbot activity, lead submissions, and Stripe clicks for the selected range.</p></div></div>
         <div class="table-wrap">
           <table>
             <thead><tr><th>Event</th><th>Page</th><th>Session</th><th>Time</th></tr></thead>
