@@ -4,21 +4,32 @@ const dashboard=$('[data-admin-dashboard]');
 const loginForm=$('[data-admin-login-form]');
 const loginMessage=$('[data-admin-login-message]');
 const metrics=$('[data-admin-metrics]');
+const pagesTable=$('[data-pages-table]');
 const leadsTable=$('[data-leads-table]');
 const eventsTable=$('[data-events-table]');
 const search=$('[data-lead-search]');
+const filterForm=$('[data-dashboard-filter]');
+const filterFrom=$('[data-filter-from]');
+const filterTo=$('[data-filter-to]');
+const filterPage=$('[data-filter-page]');
+const filterStatus=$('[data-filter-status]');
 const dialog=$('[data-lead-dialog]');
 let leads=[];
 let activeLead=null;
 
 const esc=(value)=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const fmt=(value)=>value?new Date(value).toLocaleString():'—';
+const toLocalInput=(date)=>{
+  const offset=date.getTimezoneOffset();
+  return new Date(date.getTime()-offset*60000).toISOString().slice(0,16);
+};
 
 async function api(path,options={}){
   const response=await fetch(path,{credentials:'same-origin',...options,headers:{'content-type':'application/json',...(options.headers||{})}});
   const data=await response.json().catch(()=>({}));
-  if(response.status===401){showLogin();throw new Error('Your session has expired.');}
-  if(!response.ok)throw new Error(data.error||'Request failed.');
+  const isLoginRequest=path==='/api/admin/login';
+  if(response.status===401&&!isLoginRequest){showLogin();throw new Error('Your session has expired. Please sign in again.');}
+  if(!response.ok)throw new Error(data.error||`Request failed with status ${response.status}.`);
   return data;
 }
 
@@ -30,21 +41,51 @@ function renderMetrics(data){
   metrics.innerHTML=items.map(([label,value])=>`<article class="metric"><strong>${Number(value||0).toLocaleString()}</strong><span>${esc(label)}</span></article>`).join('');
 }
 
+function renderPages(rows){
+  pagesTable.innerHTML=rows.map(page=>`<tr><td><strong>${esc(page.page_path||'—')}</strong></td><td>${Number(page.views||0).toLocaleString()}</td><td>${Number(page.unique_visitors||0).toLocaleString()}</td><td>${fmt(page.last_activity)}</td></tr>`).join('')||'<tr><td colspan="4">No page activity found for this reporting window.</td></tr>';
+}
+
 function renderLeads(rows){
   leadsTable.innerHTML=rows.map(lead=>`<tr><td><strong>${esc(lead.name)}</strong></td><td>${esc(lead.email)}<br>${esc(lead.phone)}</td><td>${esc(lead.area||'—')}</td><td>${esc(lead.lead_source||'—')}</td><td><span class="status">${esc(lead.status)}</span></td><td>${fmt(lead.submitted_at)}</td><td><button type="button" data-open-lead="${lead.id}">View</button></td></tr>`).join('')||'<tr><td colspan="7">No leads found.</td></tr>';
 }
 
 function renderEvents(rows){
-  eventsTable.innerHTML=rows.map(event=>`<tr><td>${esc(event.event_name)}</td><td>${esc(event.page_path||'—')}</td><td>${esc((event.session_id||'').slice(0,12)||'—')}</td><td>${fmt(event.occurred_at)}</td></tr>`).join('')||'<tr><td colspan="4">No events recorded yet.</td></tr>';
+  eventsTable.innerHTML=rows.map(event=>`<tr><td>${esc(event.event_name)}</td><td>${esc(event.page_path||'—')}</td><td>${esc((event.session_id||'').slice(0,12)||'—')}</td><td>${fmt(event.occurred_at)}</td></tr>`).join('')||'<tr><td colspan="4">No events recorded for this reporting window.</td></tr>';
+}
+
+function populatePages(paths){
+  const current=filterPage.value;
+  filterPage.innerHTML='<option value="">All pages</option>'+paths.map(path=>`<option value="${esc(path)}">${esc(path)}</option>`).join('');
+  if(paths.includes(current))filterPage.value=current;
+}
+
+function getFilters(){
+  const params=new URLSearchParams();
+  if(filterFrom.value)params.set('from',new Date(filterFrom.value).toISOString());
+  if(filterTo.value)params.set('to',new Date(filterTo.value).toISOString());
+  if(filterPage.value)params.set('page',filterPage.value);
+  return params;
 }
 
 async function loadDashboard(){
-  const data=await api('/api/admin/dashboard');
+  filterStatus.textContent='Loading…';
+  const params=getFilters();
+  const data=await api(`/api/admin/dashboard${params.toString()?`?${params}`:''}`);
   showDashboard();
   renderMetrics(data.metrics||{});
+  renderPages(data.pages||[]);
   leads=data.leads||[];
   renderLeads(leads);
   renderEvents(data.events||[]);
+  populatePages(data.page_paths||[]);
+  filterStatus.textContent=`Showing ${fmt(data.range?.from)} through ${fmt(data.range?.to)}${data.range?.page?` for ${data.range.page}`:''}.`;
+}
+
+function resetRange(){
+  const now=new Date();
+  filterTo.value=toLocalInput(now);
+  filterFrom.value=toLocalInput(new Date(now.getTime()-30*86400000));
+  filterPage.value='';
 }
 
 loginForm.addEventListener('submit',async event=>{
@@ -52,11 +93,14 @@ loginForm.addEventListener('submit',async event=>{
   loginMessage.hidden=false;loginMessage.textContent='Signing in...';
   try{
     await api('/api/admin/login',{method:'POST',body:JSON.stringify({password:loginForm.password.value})});
-    loginForm.reset();loginMessage.hidden=true;await loadDashboard();
+    loginForm.reset();loginMessage.hidden=true;resetRange();await loadDashboard();
   }catch(error){loginMessage.textContent=error.message;}
 });
 
 $('[data-admin-logout]').addEventListener('click',async()=>{try{await api('/api/admin/logout',{method:'POST',body:'{}'});}finally{showLogin();}});
+
+filterForm.addEventListener('submit',async event=>{event.preventDefault();await loadDashboard().catch(error=>{filterStatus.textContent=error.message;});});
+$('[data-filter-reset]').addEventListener('click',async()=>{resetRange();await loadDashboard().catch(error=>{filterStatus.textContent=error.message;});});
 
 search.addEventListener('input',()=>{
   const q=search.value.trim().toLowerCase();
@@ -85,4 +129,5 @@ $('[data-lead-save]').addEventListener('click',async()=>{
   }catch(error){message.textContent=error.message;}
 });
 
+resetRange();
 loadDashboard().catch(()=>showLogin());
