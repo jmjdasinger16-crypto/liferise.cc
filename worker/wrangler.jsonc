@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "liferise-form-api",
+  "main": "src/index.js",
+  "compatibility_date": "2026-07-31",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "liferise-leads",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID"
+    }
+  ],
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_destination_addresses": ["support@liferise.cc"]
+    }
+  ]
+}
