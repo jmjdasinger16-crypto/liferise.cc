@@ -1,4 +1,4 @@
-document.querySelectorAll('.brand-logo').forEach(img=>{img.src='https://raw.githubusercontent.com/jmjdasinger16-crypto/liferise.cc/main/assets/liferise-logo.png';});
+document.querySelectorAll('.brand-logo').forEach(img=>{img.src='assets/liferise-logo-web.png';});
 
 document.querySelectorAll('a[href^="#"]').forEach(link=>{link.addEventListener('click',event=>{const target=document.querySelector(link.getAttribute('href'));if(target){event.preventDefault();target.scrollIntoView({behavior:'smooth'});}})});
 
