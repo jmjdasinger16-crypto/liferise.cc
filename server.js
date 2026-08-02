@@ -26,6 +26,27 @@ function safePath(urlPath) {
   return path.join(root, normalized);
 }
 
+function addArticlesNavigation(html) {
+  return html.replace(/<nav>([\s\S]*?)<\/nav>/g, (fullNav, links) => {
+    let updatedLinks = links.replace(/(<a\b[^>]*href=["'][^"']*(?:resources\/|\.\/)[^"']*["'][^>]*>)Resources(<\/a>)/i, '$1Articles$2');
+
+    if (/href=["']\/resources\/?["']/i.test(updatedLinks) || />Articles<\/a>/i.test(updatedLinks)) {
+      return `<nav>${updatedLinks}</nav>`;
+    }
+
+    const articlesLink = '<a href="/resources/">Articles</a>';
+    const faqPattern = /(<a\b[^>]*>FAQ<\/a>)/i;
+
+    if (faqPattern.test(updatedLinks)) {
+      updatedLinks = updatedLinks.replace(faqPattern, `$1${articlesLink}`);
+    } else {
+      updatedLinks += articlesLink;
+    }
+
+    return `<nav>${updatedLinks}</nav>`;
+  });
+}
+
 function sendFile(res, filePath) {
   fs.stat(filePath, (statError, stat) => {
     if (statError) {
@@ -47,11 +68,13 @@ function sendFile(res, filePath) {
       }
 
       const ext = path.extname(resolvedPath).toLowerCase();
+      const body = ext === '.html' ? Buffer.from(addArticlesNavigation(data.toString('utf8'))) : data;
+
       res.writeHead(200, {
         'Content-Type': mimeTypes[ext] || 'application/octet-stream',
         'Cache-Control': ext === '.xml' ? 'no-cache' : 'public, max-age=300'
       });
-      res.end(data);
+      res.end(body);
     });
   });
 }
