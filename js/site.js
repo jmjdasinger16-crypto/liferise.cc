@@ -1,3 +1,5 @@
+document.querySelectorAll('.brand-logo').forEach(img=>{img.src='https://raw.githubusercontent.com/jmjdasinger16-crypto/liferise.cc/main/assets/liferise-logo.png';});
+
 document.querySelectorAll('a[href^="#"]').forEach(link=>{link.addEventListener('click',event=>{const target=document.querySelector(link.getAttribute('href'));if(target){event.preventDefault();target.scrollIntoView({behavior:'smooth'});}})});
 
 const getSessionId=()=>{let id=localStorage.getItem('liferise_session_id');if(!id){id=(crypto.randomUUID?crypto.randomUUID():`${Date.now()}-${Math.random()}`);localStorage.setItem('liferise_session_id',id);}return id;};
