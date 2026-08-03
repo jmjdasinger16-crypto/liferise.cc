@@ -9,6 +9,17 @@ const maxBodyBytes = 32 * 1024;
 const conversations = new Map();
 const rateBuckets = new Map();
 
+const stages = {
+  DISCOVERY: 'discovery',
+  OUTCOME: 'desired_outcome',
+  NAME: 'name',
+  CONTACT_METHOD: 'contact_method',
+  CONTACT_DETAILS: 'contact_details',
+  AVAILABILITY: 'availability',
+  CONSENT: 'consent',
+  CHECKOUT: 'checkout'
+};
+
 const mimeTypes = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -43,8 +54,8 @@ LifeRise facts:
 - A representative may contact the visitor to continue the conversation and build a game plan.
 
 Lead collection:
-Collect, when naturally appropriate: name, email, phone, preferred contact method, primary life area, desired outcome, availability, and a brief summary. Do not ask for information already present.
-Before marking a lead ready, obtain clear consent to have a LifeRise representative contact them.
+The server supplies the current conversation stage. Stay within that stage, acknowledge what the visitor said, and ask only the next stage's one question. Never skip ahead or recommend the trial before the checkout stage.
+Collect: primary life area during discovery, desired outcome, name, preferred contact method and matching details, availability, and finally explicit consent to have a LifeRise representative contact them. Do not ask for information already present.
 
 Safety:
 If the visitor appears in immediate danger, mentions suicide, self-harm, harming someone else, abuse requiring urgent protection, overdose, or a medical emergency, respond compassionately and direct them to call 911 or their local emergency number now. Encourage them to contact a trusted person nearby. Do not continue ordinary coaching or sales questions in that response.
@@ -167,17 +178,25 @@ function fallbackReply(message, lead) {
     };
   }
 
-  if (!lead.primary_area) {
+  const stage = getStage(lead);
+  if (stage === stages.DISCOVERY) {
     return {
-      reply: 'Thank you for sharing that. It sounds like this has been taking up a lot of your energy. What would feel like the most helpful improvement to make first?',
-      options: ['Feel less overwhelmed', 'Build a routine', 'Improve my finances', 'Improve a relationship', 'Get healthier']
+      reply: 'Thank you for sharing that. It sounds like this has been taking up a lot of your energy, and we can take it one piece at a time. Which part of that situation feels most important to talk through first?',
+      options: ['Mindset or stress', 'Health or energy', 'Money or career', 'Relationships or family', 'Something else']
     };
   }
 
-  return {
-    reply: 'That makes sense, and we can keep the first step realistic. Would you like a LifeRise representative to follow up and help turn this into a simple game plan?',
-    options: ['Yes, contact me', 'I have another question']
+  const replies = {
+    [stages.OUTCOME]: ['That makes sense, and it helps to name what you want rather than trying to fix everything at once. If things improved, what would a meaningful result look like for you?', []],
+    [stages.NAME]: ['That sounds like a worthwhile direction. What name would you like us to use?', []],
+    [stages.CONTACT_METHOD]: [`Thanks${lead.name ? `, ${lead.name}` : ''}. If you decide you want follow-up, would email or phone be more comfortable for you?`, ['Email', 'Phone call', 'Text message']],
+    [stages.CONTACT_DETAILS]: [`Got it. What ${lead.preferred_contact === 'email' ? 'email address' : 'phone number'} should we use?`, []],
+    [stages.AVAILABILITY]: ['Thank you. What days or times are usually easiest for a brief conversation?', ['Weekday mornings', 'Weekday afternoons', 'Weekday evenings', 'Weekends']],
+    [stages.CONSENT]: [`I appreciate you walking me through this. To confirm, may a LifeRise representative contact you by ${lead.preferred_contact || 'your preferred method'} to discuss a simple game plan?`, ['Yes, I consent', 'No, not right now']],
+    [stages.CHECKOUT]: ['Thank you—I have what the team needs to follow up thoughtfully. If you would also like to explore the 3-day trial now, you can use the optional checkout link below; there is no need to decide today.', ['View the 3-day trial', 'I have another question']]
   };
+  const [reply, options] = replies[stage];
+  return { reply, options, show_checkout: stage === stages.CHECKOUT };
 }
 
 function normalizeLead(value = {}) {
@@ -199,6 +218,54 @@ function mergeLead(existing, incoming) {
   return Object.fromEntries(Object.entries(existing).map(([key, value]) => [key, normalized[key] ?? value]));
 }
 
+function hasContactDetails(lead) {
+  return lead.preferred_contact === 'email' ? Boolean(lead.email) : Boolean(lead.phone);
+}
+
+function getStage(lead) {
+  if (!lead.primary_area) return stages.DISCOVERY;
+  if (!lead.desired_outcome) return stages.OUTCOME;
+  if (!lead.name) return stages.NAME;
+  if (!lead.preferred_contact) return stages.CONTACT_METHOD;
+  if (!hasContactDetails(lead)) return stages.CONTACT_DETAILS;
+  if (!lead.availability) return stages.AVAILABILITY;
+  if (!lead.consent_to_contact) return stages.CONSENT;
+  return stages.CHECKOUT;
+}
+
+function extractLeadFromMessage(message, stage) {
+  const value = message.trim();
+  const lead = {};
+  const email = value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0];
+  const phone = value.match(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/)?.[0];
+
+  if (stage === stages.DISCOVERY && value) lead.primary_area = value;
+  if (stage === stages.OUTCOME && value) lead.desired_outcome = value;
+  if (stage === stages.NAME && /^[a-z][a-z .'-]{1,79}$/i.test(value)) lead.name = value.replace(/^(?:i(?:'m| am)|my name is)\s+/i, '').trim();
+  if (stage === stages.CONTACT_METHOD) {
+    if (/email/i.test(value)) lead.preferred_contact = 'email';
+    else if (/text|sms/i.test(value)) lead.preferred_contact = 'text';
+    else if (/phone|call/i.test(value)) lead.preferred_contact = 'phone';
+  }
+  if (stage === stages.CONTACT_DETAILS) {
+    if (email) lead.email = email;
+    if (phone) lead.phone = phone;
+  }
+  if (stage === stages.AVAILABILITY && value) lead.availability = value;
+  if (stage === stages.CONSENT && /\b(yes|i consent|you may|okay|sure)\b/i.test(value) && !/\b(no|not|don't|do not)\b/i.test(value)) {
+    lead.consent_to_contact = true;
+  }
+  return lead;
+}
+
+function leadIsReady(lead) {
+  return Boolean(lead.primary_area && lead.desired_outcome && lead.name && lead.preferred_contact && hasContactDetails(lead) && lead.availability && lead.consent_to_contact);
+}
+
+function canShowCheckout(lead, requested, checkoutUrl) {
+  return Boolean(getStage(lead) === stages.CHECKOUT && leadIsReady(lead) && requested && checkoutUrl);
+}
+
 function extractJson(text) {
   try {
     return JSON.parse(text);
@@ -208,7 +275,7 @@ function extractJson(text) {
   }
 }
 
-async function callAi(messages) {
+async function callAi(messages, stage, lead) {
   const apiKey = process.env.AI_API_KEY || process.env.OPENAI_API_KEY;
   const endpoint = process.env.AI_API_URL || 'https://api.openai.com/v1/chat/completions';
   const model = process.env.AI_MODEL || 'gpt-4.1-mini';
@@ -224,7 +291,11 @@ async function callAi(messages) {
       model,
       temperature: 0.6,
       response_format: { type: 'json_object' },
-      messages: [{ role: 'system', content: systemPrompt }, ...messages]
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'system', content: `Server-controlled stage: ${stage}. Collected lead data: ${JSON.stringify(lead)}. Do not ask about later stages. show_checkout and lead_ready must be false unless stage is checkout.` },
+        ...messages
+      ]
     }),
     signal: AbortSignal.timeout(20000)
   });
@@ -254,11 +325,17 @@ async function handleChat(req, res) {
       createdAt: Date.now()
     };
 
+    const urgentRisk = detectUrgentRisk(message);
+    if (!urgentRisk) {
+      const stageBeforeMessage = getStage(current.lead);
+      current.lead = mergeLead(current.lead, extractLeadFromMessage(message, stageBeforeMessage));
+    }
+
     if (message) current.messages.push({ role: 'user', content: message });
     current.messages = current.messages.slice(-16);
 
     let result;
-    if (detectUrgentRisk(message)) {
+    if (urgentRisk) {
       result = {
         reply: 'I’m really sorry you’re facing this. Please call 911 or your local emergency number now if you or someone else may be in immediate danger, and contact a trusted person who can stay with you. I’m an AI coaching assistant and cannot provide emergency help.',
         lead: current.lead,
@@ -269,7 +346,7 @@ async function handleChat(req, res) {
       };
     } else {
       try {
-        result = await callAi(current.messages);
+        result = await callAi(current.messages, getStage(current.lead), current.lead);
       } catch (error) {
         console.error('AI chat error:', error.message);
       }
@@ -279,26 +356,31 @@ async function handleChat(req, res) {
         result = {
           ...fallback,
           lead: current.lead,
-          show_checkout: false,
+          show_checkout: Boolean(fallback.show_checkout),
           lead_ready: false,
           risk_level: 'normal'
         };
       }
     }
 
-    current.lead = mergeLead(current.lead, result.lead || {});
+    // The model may summarize, but only server-side parsing can advance stages or grant consent.
+    if (typeof result.lead?.summary === 'string' && result.lead.summary.trim()) {
+      current.lead.summary = result.lead.summary.trim().slice(0, 1000);
+    }
     current.messages.push({ role: 'assistant', content: String(result.reply || '') });
     current.messages = current.messages.slice(-16);
     conversations.set(conversationId, current);
 
     const checkoutUrl = process.env.STRIPE_CHECKOUT_URL || '';
-    const leadReady = Boolean(result.lead_ready && current.lead.consent_to_contact);
+    const leadReady = leadIsReady(current.lead);
+    const stage = getStage(current.lead);
 
     sendJson(res, 200, {
       conversation_id: conversationId,
       reply: String(result.reply || 'What would you like help working through today?'),
       options: Array.isArray(result.options) ? result.options.slice(0, 5).map(String) : [],
-      show_checkout: Boolean(result.show_checkout && checkoutUrl),
+      stage,
+      show_checkout: canShowCheckout(current.lead, result.show_checkout, checkoutUrl),
       checkout_url: checkoutUrl || undefined,
       lead_ready: leadReady,
       risk_level: result.risk_level || 'normal'
@@ -363,7 +445,11 @@ const server = http.createServer(async (req, res) => {
   sendFile(res, filePath);
 });
 
-server.listen(port, '0.0.0.0', () => {
-  console.log(`LifeRise server listening on port ${port}`);
-  console.log(`AI chat ${process.env.AI_API_KEY || process.env.OPENAI_API_KEY ? 'enabled' : 'running in fallback mode'}`);
-});
+if (require.main === module) {
+  server.listen(port, '0.0.0.0', () => {
+    console.log(`LifeRise server listening on port ${port}`);
+    console.log(`AI chat ${process.env.AI_API_KEY || process.env.OPENAI_API_KEY ? 'enabled' : 'running in fallback mode'}`);
+  });
+}
+
+module.exports = { server, getStage, extractLeadFromMessage, leadIsReady, canShowCheckout, stages };
