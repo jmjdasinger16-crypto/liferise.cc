@@ -222,7 +222,7 @@ Latest visitor message: ${userMessage || "(conversation just started — greet t
 Respond to the visitor with empathy. If they shared any lead information (name, phone, email, area of life, preferred contact method, best time, etc.), extract it into the lead object. Remember: only extract what they actually said — never guess or fabricate information.`;
 
   try {
-    const out = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+    const out = await env.AI.run("@cf/meta/llama-3.1-8b-fast-v2", {
       messages: [
         { role: "system", content: chatSystemPrompt },
         { role: "user", content: userPrompt }
@@ -240,7 +240,7 @@ Respond to the visitor with empathy. If they shared any lead information (name, 
       risk_level: clean(parsed.risk_level, 20) || "normal"
     };
   } catch (error) {
-    console.error("AI chat error:", error);
+    console.error("AI chat error:", error?.message || error);
     return null;
   }
 }
@@ -263,7 +263,7 @@ async function aiClose(env, c, userMessage) {
   const system = `You are the LifeRise virtual assistant. The lead has already been saved. Your goal is to help the person decide whether to start a 3-day trial for LifeRise lifestyle coaching, then $18 every two weeks. Be warm, concise, truthful and non-pushy. Never guarantee outcomes, create urgency, shame, diagnose, or claim licensed professional status. Clearly disclose price and trial. Cancellation is subject to the posted LifeRise Terms of Service; do not promise anything beyond them. If the user declines, respect it. If they mention crisis, self-harm, abuse, immediate danger or a medical emergency, stop selling and tell them to contact emergency services or an appropriate crisis resource. Return JSON only with keys reply, show_checkout, stage. stage must be closing, follow_up, declined, or safety.`;
   const prompt = `Lead context: name=${c.name}; area=${c.area}; concern=${c.concern}; preferred contact=${c.preferred_contact}. Latest user message: ${clean(userMessage, 1000)}. Respond to their concern and decide whether to display checkout.`;
   try {
-    const out = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", { messages: [{ role: "system", content: system }, { role: "user", content: prompt }], response_format: { type: "json_object" }, max_tokens: 350 });
+    const out = await env.AI.run("@cf/meta/llama-3.1-8b-fast-v2", { messages: [{ role: "system", content: system }, { role: "user", content: prompt }], response_format: { type: "json_object" }, max_tokens: 350 });
     const raw = out.response || out.result || out;
     const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
     return { reply: clean(parsed.reply, 1200), show_checkout: Boolean(parsed.show_checkout), stage: clean(parsed.stage, 30) || "closing" };
