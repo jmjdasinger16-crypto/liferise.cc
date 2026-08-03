@@ -663,7 +663,7 @@ export default {
           COUNT(DISTINCT CASE WHEN event_name='page_view' THEN session_id END) unique_visitors,
           MAX(occurred_at) last_activity
           FROM site_events WHERE page_path IS NOT NULL AND page_path <> ''${pageClause}
-          GROUP BY page_path ORDER BY views DESC, last_activity DESC`).bind(...eventBindings).all();
+          GROUP BY page_path ORDER BY views DESC, last_activity DESC`).bind(...(page ? [page] : [])).all();
         const pagePaths = await env.DB.prepare("SELECT DISTINCT page_path FROM site_events WHERE page_path IS NOT NULL AND page_path <> '' ORDER BY page_path").all();
         return json({
           metrics: { ...metrics, leads: leadCount?.total || 0 },
