@@ -48,6 +48,12 @@ async function saveMessage(env, conversationId, role, content) {
     .bind(conversationId, role, clean(content, 4000), new Date().toISOString()).run();
 }
 
+async function getRecentMessages(env, conversationId, limit = 12) {
+  const result = await env.DB.prepare("SELECT role, content FROM chat_messages WHERE conversation_id=? ORDER BY created_at DESC LIMIT ?")
+    .bind(conversationId, limit).all();
+  return (result.results || []).reverse();
+}
+
 async function saveEvent(env, request, data) {
   const occurredAt = new Date().toISOString();
   await env.DB.prepare(`INSERT INTO site_events
@@ -79,8 +85,168 @@ async function notify(env, lead) {
   } catch (error) { console.error("Email notification failed", error); }
 }
 
+/* ── Safety detection (deterministic, runs before AI) ── */
+function detectUrgentRisk(message) {
+  return /\b(suicide|kill myself|end my life|self[- ]?harm|hurt myself|kill someone|hurt someone|overdose|can't breathe|medical emergency|immediate danger)\b/i.test(message);
+}
+
+const safetyReply = "I'm really sorry you're facing this. Please call 911 or your local emergency number now if you or someone else may be in immediate danger, and contact a trusted person who can stay with you. I'm an AI coaching assistant and cannot provide emergency help.";
+
+/* ── Lead readiness (computed server-side, never trusted to AI) ── */
+const REQUIRED_FIELDS = ["area", "concern", "name", "phone", "email", "preferred_contact", "best_contact_time", "sms_consent"];
+
+function missingFields(c) {
+  return REQUIRED_FIELDS.filter(f => {
+    const val = c[f];
+    if (f === "sms_consent") return val !== 1;
+    if (f === "email") return !validEmail(val);
+    if (f === "phone") return !validPhone(val);
+    return !val || !String(val).trim();
+  });
+}
+
+function leadIsReady(c) {
+  return missingFields(c).length === 0;
+}
+
+/* ── AI-extracted lead validation (server-side enforcement) ── */
+function validateAndMergeLead(existing, incoming) {
+  const merged = { ...existing };
+  if (!merged) return merged;
+
+  if (incoming.name && !merged.name && /^[a-z][a-z .'-]{1,79}$/i.test(incoming.name)) {
+    merged.name = clean(incoming.name, 120).replace(/^(?:i(?:'m| am)|my name is)\s+/i, "").trim();
+  }
+  if (incoming.area && !merged.area) merged.area = clean(incoming.area, 160);
+  if (incoming.concern && !merged.concern) merged.concern = clean(incoming.concern, 4000);
+  if (incoming.preferred_contact && !merged.preferred_contact) {
+    const pc = clean(incoming.preferred_contact, 40).toLowerCase();
+    if (["phone call", "phone", "text message", "text", "sms", "email", "no preference"].includes(pc)) {
+      merged.preferred_contact = pc;
+    }
+  }
+  if (incoming.best_contact_time && !merged.best_contact_time) {
+    merged.best_contact_time = clean(incoming.best_contact_time, 120);
+  }
+  if (incoming.email && !validEmail(merged.email) && validEmail(incoming.email)) {
+    merged.email = clean(incoming.email, 254).toLowerCase();
+  }
+  if (incoming.phone && !validPhone(merged.phone) && validPhone(incoming.phone)) {
+    merged.phone = clean(incoming.phone, 40);
+  }
+  if (incoming.summary && !merged.summary) {
+    merged.summary = clean(incoming.summary, 1000);
+  }
+  // sms_consent: only set to 1 if AI detects explicit consent AND it wasn't already set
+  if (incoming.sms_consent === true && merged.sms_consent !== 1) {
+    merged.sms_consent = 1;
+  }
+  return merged;
+}
+
+/* ── Empathetic AI system prompt ── */
+const chatSystemPrompt = `You are the LifeRise virtual assistant. LifeRise provides empathetic lifestyle coaching and practical accountability across mindset, health, nutrition, money, career, parenting, relationships, routines, confidence, purpose, and social connection.
+
+Conversation style:
+- Sound warm, calm, human, and respectful. Acknowledge the visitor's feelings or situation before asking a question.
+- Ask only one useful question at a time. Do not interrogate, pressure, shame, diagnose, or make unrealistic promises.
+- Keep most replies between 2 and 5 sentences. Help the visitor identify the smallest useful next step.
+- Gradually collect contact details only after providing value and building trust.
+- Never claim to be a therapist, doctor, lawyer, financial adviser, or emergency service.
+
+LifeRise facts:
+- LifeRise offers lifestyle coaching, education, accountability, and practical support.
+- It is not medical, mental-health, legal, or financial professional care.
+- Membership is $18 every two weeks after a 3-day trial.
+- A representative may contact the visitor to continue the conversation and build a game plan.
+
+Lead collection:
+- Naturally work toward collecting: primary life area, what they want to improve (concern), name, phone number, email, preferred contact method, best contact time, and consent to be contacted.
+- Extract any of these fields the visitor shares naturally — do not force a rigid order.
+- Do not ask for information already collected (listed in the context below).
+- Do not recommend the trial or checkout until all lead fields are collected and consent is given.
+
+Safety:
+- If the visitor appears in immediate danger, mentions suicide, self-harm, harming someone else, abuse requiring urgent protection, overdose, or a medical emergency, respond compassionately, direct them to call 911 or their local emergency number now, and set risk_level to "urgent". Do not continue ordinary coaching or sales questions.
+
+Return ONLY valid JSON with this exact shape:
+{
+  "reply": "your empathetic response",
+  "options": [],
+  "lead": {
+    "area": null,
+    "concern": null,
+    "name": null,
+    "phone": null,
+    "email": null,
+    "preferred_contact": null,
+    "best_contact_time": null,
+    "sms_consent": null,
+    "summary": null
+  },
+  "show_checkout": false,
+  "risk_level": "normal"
+}
+
+Only populate lead fields that the visitor explicitly shared in their latest message. Use null for everything else. Set show_checkout to true ONLY if all lead fields are collected and consent was given. Keep options as an array of short strings (max 4) for quick-reply buttons, or empty array if a free-text response is more appropriate.`;
+
+/* ── AI chat function (Workers AI) ── */
+async function aiChat(env, c, userMessage, recentMessages, pagePath) {
+  const missing = missingFields(c);
+  const leadContext = `Collected lead data so far:
+- area: ${c.area || "(not yet collected)"}
+- concern: ${c.concern || "(not yet collected)"}
+- name: ${c.name || "(not yet collected)"}
+- phone: ${c.phone || "(not yet collected)"}
+- email: ${c.email || "(not yet collected)"}
+- preferred_contact: ${c.preferred_contact || "(not yet collected)"}
+- best_contact_time: ${c.best_contact_time || "(not yet collected)"}
+- sms_consent: ${c.sms_consent === 1 ? "consented" : "(not yet collected)"}
+
+Missing fields: ${missing.length ? missing.join(", ") : "none — all collected"}
+Stage: ${leadIsReady(c) ? "ready for checkout" : "collecting"}`;
+
+  const conversationContext = recentMessages.length
+    ? recentMessages.map(m => `${m.role}: ${m.content}`).join("\n")
+    : "(no prior messages — this is the start of the conversation)";
+
+  const userPrompt = `Conversation so far:
+${conversationContext}
+
+${leadContext}
+
+Current page: ${pagePath || "/"}
+Latest visitor message: ${userMessage || "(conversation just started — greet the visitor warmly)"}
+
+Respond to the visitor with empathy. If they shared any lead information (name, phone, email, area of life, preferred contact method, best time, etc.), extract it into the lead object. Remember: only extract what they actually said — never guess or fabricate information.`;
+
+  try {
+    const out = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+      messages: [
+        { role: "system", content: chatSystemPrompt },
+        { role: "user", content: userPrompt }
+      ],
+      response_format: { type: "json_object" },
+      max_tokens: 500
+    });
+    const raw = out.response || out.result || out;
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return {
+      reply: clean(parsed.reply, 1200) || "I'm here to listen. What's been on your mind lately?",
+      options: Array.isArray(parsed.options) ? parsed.options.slice(0, 4).map(o => clean(o, 60)) : [],
+      lead: parsed.lead || {},
+      show_checkout: Boolean(parsed.show_checkout),
+      risk_level: clean(parsed.risk_level, 20) || "normal"
+    };
+  } catch (error) {
+    console.error("AI chat error:", error);
+    return null;
+  }
+}
+
+/* ── Fallback: rigid prompt flow (used if AI fails) ── */
 function nextPrompt(c) {
-  if (!c.area) return { field: "area", reply: "What would you most like help improving right now?", options: ["Mindset or emotional wellness","Health, nutrition, or energy","Relationships or parenting","Money, work, or career","Routines and organization","I’m not sure"] };
+  if (!c.area) return { field: "area", reply: "What would you most like help improving right now?", options: ["Mindset or emotional wellness","Health, nutrition, or energy","Relationships or parenting","Money, work, or career","Routines and organization","I'm not sure"] };
   if (!c.concern) return { field: "concern", reply: "Tell me a little about what has been feeling difficult. There is no perfect way to explain it." };
   if (!c.name) return { field: "name", reply: "Thank you for sharing that. What name should your LifeRise representative use?" };
   if (!c.phone) return { field: "phone", reply: "What is the best phone number for your representative to reach you?" };
@@ -91,6 +257,7 @@ function nextPrompt(c) {
   return null;
 }
 
+/* ── AI closing (after lead is saved) ── */
 async function aiClose(env, c, userMessage) {
   const system = `You are the LifeRise virtual assistant. The lead has already been saved. Your goal is to help the person decide whether to start a 3-day trial for LifeRise lifestyle coaching, then $18 every two weeks. Be warm, concise, truthful and non-pushy. Never guarantee outcomes, create urgency, shame, diagnose, or claim licensed professional status. Clearly disclose price and trial. Cancellation is subject to the posted LifeRise Terms of Service; do not promise anything beyond them. If the user declines, respect it. If they mention crisis, self-harm, abuse, immediate danger or a medical emergency, stop selling and tell them to contact emergency services or an appropriate crisis resource. Return JSON only with keys reply, show_checkout, stage. stage must be closing, follow_up, declined, or safety.`;
   const prompt = `Lead context: name=${c.name}; area=${c.area}; concern=${c.concern}; preferred contact=${c.preferred_contact}. Latest user message: ${clean(userMessage, 1000)}. Respond to their concern and decide whether to display checkout.`;
@@ -160,7 +327,7 @@ export default {
           SUM(CASE WHEN event_name='page_view' THEN 1 ELSE 0 END) views,
           COUNT(DISTINCT CASE WHEN event_name='page_view' THEN session_id END) unique_visitors,
           MAX(occurred_at) last_activity
-          FROM site_events WHERE occurred_at >= ? AND occurred_at <= ? AND page_path IS NOT NULL AND page_path <> ''${pageClause}
+          FROM site_events WHERE page_path IS NOT NULL AND page_path <> ''${pageClause}
           GROUP BY page_path ORDER BY views DESC, last_activity DESC`).bind(...eventBindings).all();
         const pagePaths = await env.DB.prepare("SELECT DISTINCT page_path FROM site_events WHERE page_path IS NOT NULL AND page_path <> '' ORDER BY page_path").all();
         return json({
@@ -202,58 +369,113 @@ export default {
       return json({ success: true, lead_id: id, message: "Thank you. Your request has been received and a LifeRise representative will contact you soon.", checkout_url: STRIPE_URL }, 201);
     }
 
+    /* ── AI-powered chat handler ── */
     if (request.method === "POST" && url.pathname === "/api/chat") {
       let body; try { body = await request.json(); } catch { return json({ error: "Invalid request body." }, 400); }
-      const conversationId = clean(body.conversation_id,80) || uuid();
-      const userMessage = clean(body.message,2000);
+      const conversationId = clean(body.conversation_id, 80) || uuid();
+      const userMessage = clean(body.message, 2000);
+      const pagePath = clean(body.page_path, 500);
       const now = new Date().toISOString();
+
+      // Load or create conversation
       let c = await env.DB.prepare("SELECT * FROM chat_conversations WHERE id=?").bind(conversationId).first();
       if (!c) {
-        await env.DB.prepare("INSERT INTO chat_conversations (id,stage,created_at,updated_at) VALUES (?,'collecting',?,?)").bind(conversationId,now,now).run();
+        await env.DB.prepare("INSERT INTO chat_conversations (id,stage,created_at,updated_at) VALUES (?,'collecting',?,?)").bind(conversationId, now, now).run();
         c = { id: conversationId, stage: "collecting" };
       }
+
+      // Save user message
       if (userMessage) await saveMessage(env, conversationId, "user", userMessage);
 
-      if (c.stage === "closing" || c.stage === "follow_up") {
+      // ── Safety check (deterministic, always runs first) ──
+      if (detectUrgentRisk(userMessage)) {
+        await saveMessage(env, conversationId, "assistant", safetyReply);
+        await env.DB.prepare("UPDATE chat_conversations SET stage='safety',updated_at=? WHERE id=?").bind(now, conversationId).run();
+        return json({ conversation_id: conversationId, reply: safetyReply, options: [], lead_saved: Boolean(c.lead_id), show_checkout: false, stage: "safety", risk_level: "urgent" });
+      }
+
+      // ── Closing / follow-up stage (lead already saved) ──
+      if (c.stage === "closing" || c.stage === "follow_up" || c.stage === "declined") {
         const ai = await aiClose(env, c, userMessage);
         await saveMessage(env, conversationId, "assistant", ai.reply);
-        await env.DB.prepare("UPDATE chat_conversations SET stage=?,updated_at=? WHERE id=?").bind(ai.stage,now,conversationId).run();
+        await env.DB.prepare("UPDATE chat_conversations SET stage=?,updated_at=? WHERE id=?").bind(ai.stage, now, conversationId).run();
         return json({ conversation_id: conversationId, reply: ai.reply, options: [], lead_saved: Boolean(c.lead_id), show_checkout: ai.show_checkout, checkout_url: STRIPE_URL, stage: ai.stage });
       }
 
-      const expected = nextPrompt(c);
-      if (!expected) return json({ conversation_id: conversationId, reply: "Your information has been saved. A LifeRise representative will reach out soon.", lead_saved: Boolean(c.lead_id), show_checkout: true, checkout_url: STRIPE_URL, stage: "closing" });
+      // ── Collecting stage: AI-driven empathetic conversation ──
+      const recentMessages = await getRecentMessages(env, conversationId, 12);
+      const aiResult = await aiChat(env, c, userMessage, recentMessages, pagePath);
 
-      if (userMessage) {
-        let accepted = true; let value = userMessage;
-        if (expected.field === "email") { value = userMessage.toLowerCase(); accepted = validEmail(value); }
-        if (expected.field === "phone") accepted = validPhone(userMessage);
-        if (!accepted) {
-          const reply = expected.field === "email" ? "Please enter a valid email address." : "Please enter a valid phone number with at least 10 digits.";
-          await saveMessage(env, conversationId, "assistant", reply); return json({ conversation_id: conversationId, reply, field: expected.field });
+      let reply, options = [];
+
+      if (aiResult) {
+        reply = aiResult.reply;
+        options = aiResult.options;
+
+        // Validate and merge AI-extracted lead data (server-side enforcement)
+        const validated = validateAndMergeLead(c, aiResult.lead || {});
+
+        // Persist any newly collected fields to D1
+        const fieldsToUpdate = ["area", "concern", "name", "phone", "email", "preferred_contact", "best_contact_time", "sms_consent", "summary"];
+        const updates = [];
+        const values = [];
+        for (const f of fieldsToUpdate) {
+          if (validated[f] !== undefined && validated[f] !== c[f] && validated[f] !== null && validated[f] !== "") {
+            updates.push(`${f}=?`);
+            values.push(validated[f]);
+            c[f] = validated[f]; // update in-memory copy
+          }
         }
-        if (expected.field === "sms_consent") value = userMessage.toLowerCase().includes("agree") ? 1 : 2;
-        await env.DB.prepare(`UPDATE chat_conversations SET ${expected.field}=?,updated_at=? WHERE id=?`).bind(value,now,conversationId).run();
-        c[expected.field] = value;
+        if (updates.length > 0) {
+          values.push(now, conversationId);
+          await env.DB.prepare(`UPDATE chat_conversations SET ${updates.join(",")},updated_at=? WHERE id=?`).bind(...values).run();
+        }
+      } else {
+        // ── Fallback: rigid prompt flow (if AI fails) ──
+        if (userMessage) {
+          const expected = nextPrompt(c);
+          if (expected) {
+            let accepted = true; let value = userMessage;
+            if (expected.field === "email") { value = userMessage.toLowerCase(); accepted = validEmail(value); }
+            if (expected.field === "phone") accepted = validPhone(userMessage);
+            if (!accepted) {
+              const fallbackReply = expected.field === "email" ? "Please enter a valid email address." : "Please enter a valid phone number with at least 10 digits.";
+              await saveMessage(env, conversationId, "assistant", fallbackReply);
+              return json({ conversation_id: conversationId, reply: fallbackReply, field: expected.field });
+            }
+            if (expected.field === "sms_consent") value = userMessage.toLowerCase().includes("agree") ? 1 : 2;
+            await env.DB.prepare(`UPDATE chat_conversations SET ${expected.field}=?,updated_at=? WHERE id=?`).bind(value, now, conversationId).run();
+            c[expected.field] = value;
+          }
+        }
+        const next = nextPrompt(c);
+        if (next) {
+          reply = next.reply;
+          options = next.options || [];
+        } else {
+          reply = "Your information has been saved. A LifeRise representative will reach out soon.";
+        }
       }
 
-      const next = nextPrompt(c);
-      if (!next && !c.lead_id) {
+      // ── Check if lead is ready (server-side computed) ──
+      if (leadIsReady(c) && !c.lead_id) {
         const smsConsent = c.sms_consent === 1;
         const summary = `${c.area}: ${c.concern}`;
-        const lead = { name:c.name,email:c.email,phone:c.phone,area:c.area,concern:c.concern,preferred_contact:c.preferred_contact,best_contact_time:c.best_contact_time,summary,sms_consent:smsConsent,conversation_id:conversationId };
+        const lead = { name: c.name, email: c.email, phone: c.phone, area: c.area, concern: c.concern, preferred_contact: c.preferred_contact, best_contact_time: c.best_contact_time, summary, sms_consent: smsConsent, conversation_id: conversationId };
         const leadId = await saveLead(env, request, lead, "chatbot");
-        await env.DB.prepare("UPDATE chat_conversations SET lead_id=?,summary=?,stage='closing',updated_at=? WHERE id=?").bind(leadId,summary,now,conversationId).run();
+        await env.DB.prepare("UPDATE chat_conversations SET lead_id=?,summary=?,stage='closing',updated_at=? WHERE id=?").bind(leadId, summary, now, conversationId).run();
         c.lead_id = leadId; c.summary = summary; c.stage = "closing";
-        ctx.waitUntil(Promise.all([notify(env, lead), saveEvent(env, request, { event_name: "lead_submitted", page_path: clean(body.page_path,500), session_id: clean(body.session_id,120), lead_id: leadId, conversation_id: conversationId, metadata: { source: "chatbot" } })]));
-      }
-      if (!next) {
+        ctx.waitUntil(Promise.all([notify(env, lead), saveEvent(env, request, { event_name: "lead_submitted", page_path: pagePath, session_id: clean(body.session_id, 120), lead_id: leadId, conversation_id: conversationId, metadata: { source: "chatbot" } })]));
+
+        // Use AI for the closing message
         const ai = await aiClose(env, c, "The lead information has just been saved. Introduce the trial naturally.");
         await saveMessage(env, conversationId, "assistant", ai.reply);
         return json({ conversation_id: conversationId, reply: ai.reply, options: [], lead_saved: true, show_checkout: ai.show_checkout, checkout_url: STRIPE_URL, stage: ai.stage });
       }
-      await saveMessage(env, conversationId, "assistant", next.reply);
-      return json({ conversation_id: conversationId, reply: next.reply, options: next.options || [], field: next.field, lead_saved: Boolean(c.lead_id), show_checkout: false });
+
+      // ── Normal response ──
+      await saveMessage(env, conversationId, "assistant", reply);
+      return json({ conversation_id: conversationId, reply, options, lead_saved: Boolean(c.lead_id), show_checkout: false, stage: c.stage || "collecting" });
     }
 
     return json({ error: "Not found" }, 404);
