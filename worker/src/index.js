@@ -1,6 +1,10 @@
 const STRIPE_URL = "https://buy.stripe.com/5kQ3cu0rQ9ssbIG2NR6sw04";
 const SESSION_COOKIE = "liferise_admin";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
+const CLIENT_SESSION_COOKIE = "liferise_client";
+const CLIENT_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
+const ACTIVATION_TTL_MS = 30 * 60 * 1000;
+const TRIAL_DAYS = 3;
 const json = (body, status = 200, extraHeaders = {}) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...extraHeaders } });
 const clean = (value, max = 2000) => String(value ?? "").trim().slice(0, max);
 const validEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -10,6 +14,15 @@ const encoder = new TextEncoder();
 
 const b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 const b64urlText = (text) => b64url(encoder.encode(text));
+const b64urlToBytes = (str) => {
+  const normalized = String(str || "").replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+};
+const toHex = (bytes) => [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
 const parseCookies = (request) => Object.fromEntries((request.headers.get("Cookie") || "").split(";").map(v => v.trim()).filter(Boolean).map(v => { const i = v.indexOf("="); return [v.slice(0, i), decodeURIComponent(v.slice(i + 1))]; }));
 const timingSafeEqual = (a, b) => {
   const aa = encoder.encode(String(a));
@@ -48,6 +61,142 @@ async function saveMessage(env, conversationId, role, content) {
     .bind(conversationId, role, clean(content, 4000), new Date().toISOString()).run();
 }
 
+/* ══════════════════════════════ CLIENT PORTAL ══════════════════════════════ */
+
+async function hashPassword(password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const keyMaterial = await crypto.subtle.importKey("raw", encoder.encode(password), { name: "PBKDF2" }, false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations: 100000, hash: "SHA-256" }, keyMaterial, 256);
+  return `pbkdf2$100000$${b64url(salt)}$${b64url(new Uint8Array(bits))}`;
+}
+
+async function verifyPassword(password, stored) {
+  const parts = String(stored || "").split("$");
+  if (parts.length !== 4 || parts[0] !== "pbkdf2") return false;
+  const iterations = Number(parts[1]) || 100000;
+  const salt = b64urlToBytes(parts[2]);
+  const expected = b64url(b64urlToBytes(parts[3]));
+  const keyMaterial = await crypto.subtle.importKey("raw", encoder.encode(password), { name: "PBKDF2" }, false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations, hash: "SHA-256" }, keyMaterial, 256);
+  return timingSafeEqual(b64url(new Uint8Array(bits)), expected);
+}
+
+async function createClientSessionToken(env, clientId) {
+  const payload = b64urlText(JSON.stringify({ cid: clientId, exp: Math.floor(Date.now() / 1000) + CLIENT_SESSION_TTL_SECONDS, nonce: uuid() }));
+  return `${payload}.${await hmac(env.CLIENT_SESSION_SECRET, payload)}`;
+}
+
+function clientCookieHeader(token, maxAge = CLIENT_SESSION_TTL_SECONDS) {
+  return `${CLIENT_SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
+}
+
+async function getAuthedClient(request, env) {
+  const token = parseCookies(request)[CLIENT_SESSION_COOKIE];
+  if (!token || !env.CLIENT_SESSION_SECRET) return null;
+  const [payload, signature] = token.split(".");
+  if (!payload || !signature) return null;
+  if (!timingSafeEqual(signature, await hmac(env.CLIENT_SESSION_SECRET, payload))) return null;
+  try {
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const decoded = JSON.parse(atob(normalized + "=".repeat((4 - normalized.length % 4) % 4)));
+    if (!decoded.exp || decoded.exp <= Math.floor(Date.now() / 1000) || !decoded.cid) return null;
+    return await env.DB.prepare("SELECT * FROM clients WHERE id=?").bind(decoded.cid).first();
+  } catch { return null; }
+}
+
+function mapSubscriptionStatus(stripeStatus) {
+  if (stripeStatus === "trialing") return "trial";
+  if (stripeStatus === "active") return "active";
+  if (["past_due", "unpaid", "incomplete", "incomplete_expired"].includes(stripeStatus)) return "past_due";
+  if (stripeStatus === "canceled") return "canceled";
+  return null;
+}
+
+async function stripeApi(env, path) {
+  if (!env.STRIPE_SECRET_KEY) return { ok: false, status: 503, data: { error: "Stripe is not configured." } };
+  const res = await fetch(`https://api.stripe.com/v1/${path}`, { headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` } });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+
+async function verifyStripeSignature(rawBody, sigHeader, secret) {
+  if (!sigHeader || !secret) return false;
+  const parts = Object.fromEntries(sigHeader.split(",").map((p) => { const i = p.indexOf("="); return [p.slice(0, i), p.slice(i + 1)]; }));
+  if (!parts.t || !parts.v1) return false;
+  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(`${parts.t}.${rawBody}`));
+  return timingSafeEqual(toHex(signature), parts.v1);
+}
+
+async function findClientById(env, id) {
+  return env.DB.prepare("SELECT * FROM clients WHERE id=?").bind(id).first();
+}
+
+async function upsertClientFromCheckoutSession(env, session) {
+  const email = clean(session.customer_details?.email || session.customer_email || "", 254).toLowerCase();
+  if (!validEmail(email)) return null;
+  const name = clean(session.customer_details?.name || "", 120) || null;
+  const phone = clean(session.customer_details?.phone || "", 40) || null;
+  const customerId = session.customer || null;
+  const subscriptionId = session.subscription || null;
+  const now = new Date().toISOString();
+  const trialEnds = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  const existing = await env.DB.prepare("SELECT * FROM clients WHERE email=? OR (stripe_customer_id IS NOT NULL AND stripe_customer_id=?)").bind(email, customerId).first();
+  if (existing) {
+    await env.DB.prepare("UPDATE clients SET stripe_customer_id=COALESCE(stripe_customer_id,?), stripe_subscription_id=COALESCE(?,stripe_subscription_id), name=COALESCE(name,?), phone=COALESCE(phone,?), updated_at=? WHERE id=?")
+      .bind(customerId, subscriptionId, name, phone, now, existing.id).run();
+    return findClientById(env, existing.id);
+  }
+
+  const lead = await env.DB.prepare("SELECT id FROM coaching_leads WHERE email=? ORDER BY submitted_at DESC LIMIT 1").bind(email).first();
+  const result = await env.DB.prepare(`INSERT INTO clients
+    (stripe_customer_id, stripe_subscription_id, email, phone, name, status, trial_ends_at, source_lead_id, created_at, updated_at)
+    VALUES (?,?,?,?,?,'trial',?,?,?,?)`)
+    .bind(customerId, subscriptionId, email, phone, name, trialEnds, lead?.id || null, now, now).run();
+  return findClientById(env, result.meta?.last_row_id);
+}
+
+async function issueActivationToken(env, clientId) {
+  const token = uuid().replace(/-/g, "") + uuid().replace(/-/g, "");
+  const expires = new Date(Date.now() + ACTIVATION_TTL_MS).toISOString();
+  await env.DB.prepare("UPDATE clients SET activation_nonce=?, activation_nonce_expires=?, updated_at=? WHERE id=?").bind(token, expires, new Date().toISOString(), clientId).run();
+  return token;
+}
+
+const goalCoachSystemPrompt = (client, goals, notes) => `You are the LifeRise Coaching Assistant inside the private client portal. You are talking with ${client.name || "a LifeRise client"}, who is already an enrolled LifeRise member. Your job is to help them stay motivated and take practical next steps on the goals their human coach has set for them — not to replace their coach.
+
+Rules:
+- Be warm, encouraging, and specific. Keep most replies to 2-5 sentences.
+- Ground every response in the client's actual goals listed below. Do not invent new goals; help them work toward the ones their coach set.
+- Offer small, realistic next steps, encouragement, and reflection questions. Celebrate progress.
+- If the client wants to change a goal, adjust a plan, or needs to talk to a human, gently suggest they use the "Request a call with your coach" feature in the portal.
+- Never diagnose, prescribe, or act as a medical, mental-health, legal, or financial professional.
+- If the client expresses thoughts of self-harm, suicide, abuse, or describes a medical emergency, respond with care, urge them to call 911 or a crisis line immediately, and stop normal coaching for that reply.
+
+Client's current goals (set by their coach):
+${goals.length ? goals.map((g, i) => `${i + 1}. ${g.title}${g.description ? ` — ${g.description}` : ""}${g.target_date ? ` (target: ${g.target_date})` : ""}`).join("\n") : "No goals have been set yet — encourage the client to request a call with their coach to set some."}
+
+Recent notes from the coach that are visible to this client:
+${notes.length ? notes.map((n) => `- ${n.content}`).join("\n") : "(none yet)"}
+
+Respond only with plain conversational text (not JSON).`;
+
+async function portalChat(env, client, userMessage, recentMessages) {
+  const goals = (await env.DB.prepare("SELECT title, description, target_date FROM client_goals WHERE client_id=? AND status='active' ORDER BY created_at DESC").bind(client.id).all()).results || [];
+  const notes = (await env.DB.prepare("SELECT content FROM client_notes WHERE client_id=? AND visibility='client' ORDER BY created_at DESC LIMIT 5").bind(client.id).all()).results || [];
+  const system = goalCoachSystemPrompt(client, goals, notes);
+  const messages = [{ role: "system", content: system }, ...recentMessages.map((m) => ({ role: m.role, content: m.content })), { role: "user", content: userMessage }];
+  try {
+    const out = await env.AI.run("@cf/meta/llama-3.1-8b-fast-v2", { messages, max_tokens: 400 });
+    const text = clean(out.response || out.result || (typeof out === "string" ? out : ""), 2000);
+    return text || "I'm here to help you work toward your goals. What would you like to focus on today?";
+  } catch (error) {
+    console.error("Portal chat AI error:", error?.message || error);
+    return "I'm having trouble responding right now. In the meantime, you can review your goals above or request a call with your coach.";
+  }
+}
+
 async function getRecentMessages(env, conversationId, limit = 12) {
   const result = await env.DB.prepare("SELECT role, content FROM chat_messages WHERE conversation_id=? ORDER BY created_at DESC LIMIT ?")
     .bind(conversationId, limit).all();
@@ -83,6 +232,16 @@ async function notify(env, lead) {
       text: `Name: ${lead.name}\nEmail: ${lead.email}\nPhone: ${lead.phone}\nArea: ${lead.area}\nPreferred contact: ${lead.preferred_contact}\nBest time: ${lead.best_contact_time}\nSummary: ${lead.summary || lead.concern || ""}`
     });
   } catch (error) { console.error("Email notification failed", error); }
+}
+
+async function notifyCallRequest(env, client, callRequest) {
+  try {
+    await env.EMAIL.send({
+      from: "LifeRise Portal <notifications@liferise.cc>", to: "support@liferise.cc", replyTo: client.email,
+      subject: `Client call request — ${client.name || client.email}`,
+      text: `Client: ${client.name || "(no name)"}\nEmail: ${client.email}\nPhone: ${client.phone || "n/a"}\nPreferred time: ${callRequest.preferred_time || "n/a"}\nReason: ${callRequest.reason || "n/a"}`
+    });
+  } catch (error) { console.error("Call request email notification failed", error); }
 }
 
 /* ── Safety detection (deterministic, runs before AI) ── */
@@ -308,6 +467,170 @@ export default {
       return json({ success: true }, 200, { "set-cookie": `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0` });
     }
 
+    /* ══════════════ PUBLIC CLIENT-PORTAL ROUTES ══════════════ */
+
+    if (request.method === "POST" && url.pathname === "/api/stripe/webhook") {
+      if (!env.STRIPE_WEBHOOK_SECRET) return json({ error: "Stripe webhook is not configured." }, 503);
+      const rawBody = await request.text();
+      const sig = request.headers.get("Stripe-Signature");
+      if (!(await verifyStripeSignature(rawBody, sig, env.STRIPE_WEBHOOK_SECRET))) return json({ error: "Invalid signature." }, 400);
+      let event; try { event = JSON.parse(rawBody); } catch { return json({ error: "Invalid payload." }, 400); }
+
+      try {
+        if (event.type === "checkout.session.completed") {
+          const session = event.data?.object || {};
+          const client = await upsertClientFromCheckoutSession(env, session);
+          if (client) await issueActivationToken(env, client.id);
+        } else if (event.type === "customer.subscription.updated" || event.type === "customer.subscription.deleted") {
+          const sub = event.data?.object || {};
+          const status = event.type === "customer.subscription.deleted" ? "canceled" : mapSubscriptionStatus(sub.status);
+          if (status && sub.customer) {
+            await env.DB.prepare("UPDATE clients SET status=?, stripe_subscription_id=COALESCE(stripe_subscription_id,?), updated_at=? WHERE stripe_customer_id=?")
+              .bind(status, sub.id || null, new Date().toISOString(), sub.customer).run();
+          }
+        }
+      } catch (error) { console.error("Stripe webhook processing error:", error?.message || error); }
+
+      return json({ received: true });
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/portal/activate") {
+      let data; try { data = await request.json(); } catch { return json({ error: "Invalid request body." }, 400); }
+      const sessionId = clean(data.session_id, 200);
+      const token = clean(data.token, 200);
+      let client = null;
+
+      if (token) {
+        client = await env.DB.prepare("SELECT * FROM clients WHERE activation_nonce=?").bind(token).first();
+        if (!client || !client.activation_nonce_expires || new Date(client.activation_nonce_expires).getTime() < Date.now()) {
+          return json({ error: "This activation link is invalid or has expired. Please contact your coach for a new link." }, 400);
+        }
+      } else if (sessionId) {
+        const stripeRes = await stripeApi(env, `checkout/sessions/${encodeURIComponent(sessionId)}`);
+        if (!stripeRes.ok) return json({ error: "We couldn't verify your checkout session. Please contact support@liferise.cc." }, 400);
+        if (stripeRes.data.payment_status !== "paid" && stripeRes.data.status !== "complete") {
+          return json({ error: "Your checkout has not finished processing yet. Please try again in a moment." }, 400);
+        }
+        client = await upsertClientFromCheckoutSession(env, stripeRes.data);
+        if (!client) return json({ error: "We couldn't find an email on this checkout session. Please contact support@liferise.cc." }, 400);
+        if (!client.activation_nonce || !client.activation_nonce_expires || new Date(client.activation_nonce_expires).getTime() < Date.now()) {
+          await issueActivationToken(env, client.id);
+          client = await findClientById(env, client.id);
+        }
+      } else {
+        return json({ error: "Missing activation session or token." }, 400);
+      }
+
+      return json({
+        activation_token: client.activation_nonce,
+        email: client.email,
+        name: client.name,
+        already_has_password: Boolean(client.password_hash)
+      });
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/portal/set-password") {
+      let data; try { data = await request.json(); } catch { return json({ error: "Invalid request body." }, 400); }
+      const token = clean(data.token, 200);
+      const password = String(data.password || "");
+      if (!token) return json({ error: "Missing activation token." }, 400);
+      if (password.length < 8) return json({ error: "Password must be at least 8 characters." }, 400);
+
+      const client = await env.DB.prepare("SELECT * FROM clients WHERE activation_nonce=?").bind(token).first();
+      if (!client || !client.activation_nonce_expires || new Date(client.activation_nonce_expires).getTime() < Date.now()) {
+        return json({ error: "This activation link is invalid or has expired. Please contact your coach for a new link." }, 400);
+      }
+
+      const passwordHash = await hashPassword(password);
+      const now = new Date().toISOString();
+      await env.DB.prepare("UPDATE clients SET password_hash=?, activation_nonce=NULL, activation_nonce_expires=NULL, last_login_at=?, updated_at=? WHERE id=?")
+        .bind(passwordHash, now, now, client.id).run();
+
+      const sessionToken = await createClientSessionToken(env, client.id);
+      return json({ success: true }, 200, { "set-cookie": clientCookieHeader(sessionToken) });
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/portal/login") {
+      let data; try { data = await request.json(); } catch { return json({ error: "Invalid request body." }, 400); }
+      if (!env.CLIENT_SESSION_SECRET) return json({ error: "Client portal is not configured." }, 503);
+      const email = clean(data.email, 254).toLowerCase();
+      const password = String(data.password || "");
+      if (!validEmail(email) || !password) return json({ error: "Please provide a valid email and password." }, 400);
+
+      const client = await env.DB.prepare("SELECT * FROM clients WHERE email=?").bind(email).first();
+      if (!client || !client.password_hash || !(await verifyPassword(password, client.password_hash))) {
+        return json({ error: "Incorrect email or password." }, 401);
+      }
+      await env.DB.prepare("UPDATE clients SET last_login_at=? WHERE id=?").bind(new Date().toISOString(), client.id).run();
+      const token = await createClientSessionToken(env, client.id);
+      return json({ success: true }, 200, { "set-cookie": clientCookieHeader(token) });
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/portal/logout") {
+      return json({ success: true }, 200, { "set-cookie": clientCookieHeader("", 0) });
+    }
+
+    /* ══════════════ AUTHENTICATED CLIENT-PORTAL ROUTES ══════════════ */
+
+    if (url.pathname.startsWith("/api/portal/") && !["/api/portal/activate", "/api/portal/set-password", "/api/portal/login", "/api/portal/logout"].includes(url.pathname)) {
+      const client = await getAuthedClient(request, env);
+      if (!client) return json({ error: "Unauthorized." }, 401);
+
+      if (request.method === "GET" && url.pathname === "/api/portal/me") {
+        return json({ client: { id: client.id, email: client.email, name: client.name, phone: client.phone, status: client.status, trial_ends_at: client.trial_ends_at } });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/portal/notes") {
+        const notes = await env.DB.prepare("SELECT id, author, content, created_at, updated_at FROM client_notes WHERE client_id=? AND visibility='client' ORDER BY created_at DESC LIMIT 200").bind(client.id).all();
+        return json({ notes: notes.results || [] });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/portal/goals") {
+        const goals = await env.DB.prepare("SELECT id, title, description, target_date, status, created_at, updated_at FROM client_goals WHERE client_id=? ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'completed' THEN 1 ELSE 2 END, created_at DESC LIMIT 200").bind(client.id).all();
+        return json({ goals: goals.results || [] });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/portal/call-requests") {
+        const requests = await env.DB.prepare("SELECT id, reason, preferred_time, status, scheduled_at, created_at FROM call_requests WHERE client_id=? ORDER BY created_at DESC LIMIT 100").bind(client.id).all();
+        return json({ call_requests: requests.results || [] });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/portal/call-requests") {
+        let data; try { data = await request.json(); } catch { return json({ error: "Invalid request body." }, 400); }
+        const reason = clean(data.reason, 1000);
+        const preferredTime = clean(data.preferred_time, 200);
+        const now = new Date().toISOString();
+        const result = await env.DB.prepare("INSERT INTO call_requests (client_id, reason, preferred_time, status, created_at, updated_at) VALUES (?,?,?,'pending',?,?)")
+          .bind(client.id, reason, preferredTime, now, now).run();
+        const callRequest = { id: result.meta?.last_row_id, reason, preferred_time: preferredTime, status: "pending", created_at: now };
+        ctx.waitUntil(notifyCallRequest(env, client, callRequest));
+        return json({ success: true, call_request: callRequest }, 201);
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/portal/chat/history") {
+        const history = await env.DB.prepare("SELECT role, content, created_at FROM portal_chat_messages WHERE client_id=? ORDER BY created_at ASC LIMIT 200").bind(client.id).all();
+        return json({ messages: history.results || [] });
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/portal/chat") {
+        let data; try { data = await request.json(); } catch { return json({ error: "Invalid request body." }, 400); }
+        const userMessage = clean(data.message, 2000);
+        if (!userMessage) return json({ error: "Message cannot be empty." }, 400);
+        const now = new Date().toISOString();
+
+        const recent = (await env.DB.prepare("SELECT role, content FROM portal_chat_messages WHERE client_id=? ORDER BY created_at DESC LIMIT 12").bind(client.id).all()).results || [];
+        recent.reverse();
+
+        await env.DB.prepare("INSERT INTO portal_chat_messages (client_id, role, content, created_at) VALUES (?,'user',?,?)").bind(client.id, userMessage, now).run();
+        const reply = await portalChat(env, client, userMessage, recent);
+        await env.DB.prepare("INSERT INTO portal_chat_messages (client_id, role, content, created_at) VALUES (?,'assistant',?,?)").bind(client.id, reply, new Date().toISOString()).run();
+
+        return json({ reply });
+      }
+
+      return json({ error: "Not found" }, 404);
+    }
+
     if (url.pathname.startsWith("/api/admin/")) {
       if (!(await isAdmin(request, env))) return json({ error: "Unauthorized." }, 401);
 
@@ -350,6 +673,124 @@ export default {
           events: events.results || [],
           range: { from, to, page: page || null }
         });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/admin/clients") {
+        const clients = await env.DB.prepare(`SELECT id, email, name, phone, status, trial_ends_at, created_at, last_login_at,
+          (SELECT COUNT(*) FROM call_requests cr WHERE cr.client_id = clients.id AND cr.status='pending') pending_call_requests
+          FROM clients ORDER BY created_at DESC LIMIT 500`).all();
+        return json({ clients: clients.results || [] });
+      }
+
+      const clientDetailMatch = url.pathname.match(/^\/api\/admin\/clients\/(\d+)$/);
+      if (request.method === "GET" && clientDetailMatch) {
+        const id = Number(clientDetailMatch[1]);
+        const client = await findClientById(env, id);
+        if (!client) return json({ error: "Client not found." }, 404);
+        const notes = await env.DB.prepare("SELECT id, author, content, visibility, created_at, updated_at FROM client_notes WHERE client_id=? ORDER BY created_at DESC LIMIT 200").bind(id).all();
+        const goals = await env.DB.prepare("SELECT id, title, description, target_date, status, created_at, updated_at FROM client_goals WHERE client_id=? ORDER BY created_at DESC LIMIT 200").bind(id).all();
+        const callRequests = await env.DB.prepare("SELECT id, reason, preferred_time, status, scheduled_at, coach_notes, created_at, updated_at FROM call_requests WHERE client_id=? ORDER BY created_at DESC LIMIT 200").bind(id).all();
+        const { password_hash, activation_nonce, ...safeClient } = client;
+        return json({ client: safeClient, notes: notes.results || [], goals: goals.results || [], call_requests: callRequests.results || [] });
+      }
+
+      if (request.method === "PATCH" && clientDetailMatch) {
+        let data; try { data = await request.json(); } catch { return json({ error: "Invalid request body." }, 400); }
+        const id = Number(clientDetailMatch[1]);
+        const allowedStatuses = ["trial", "active", "past_due", "canceled"];
+        const client = await findClientById(env, id);
+        if (!client) return json({ error: "Client not found." }, 404);
+        const status = allowedStatuses.includes(clean(data.status, 30)) ? clean(data.status, 30) : client.status;
+        const name = data.name !== undefined ? clean(data.name, 120) : client.name;
+        const phone = data.phone !== undefined ? clean(data.phone, 40) : client.phone;
+        await env.DB.prepare("UPDATE clients SET status=?, name=?, phone=?, updated_at=? WHERE id=?")
+          .bind(status, name, phone, new Date().toISOString(), id).run();
+        return json({ success: true, client: await findClientById(env, id) });
+      }
+
+      const clientNotesMatch = url.pathname.match(/^\/api\/admin\/clients\/(\d+)\/notes$/);
+      if (request.method === "POST" && clientNotesMatch) {
+        let data; try { data = await request.json(); } catch { return json({ error: "Invalid request body." }, 400); }
+        const clientId = Number(clientNotesMatch[1]);
+        const content = clean(data.content, 5000);
+        if (!content) return json({ error: "Note content is required." }, 400);
+        const visibility = data.visibility === "internal" ? "internal" : "client";
+        const now = new Date().toISOString();
+        const result = await env.DB.prepare("INSERT INTO client_notes (client_id, author, content, visibility, created_at, updated_at) VALUES (?,'coach',?,?,?,?)")
+          .bind(clientId, content, visibility, now, now).run();
+        return json({ success: true, note: { id: result.meta?.last_row_id, author: "coach", content, visibility, created_at: now } }, 201);
+      }
+
+      const noteMatch = url.pathname.match(/^\/api\/admin\/clients\/(\d+)\/notes\/(\d+)$/);
+      if (request.method === "PATCH" && noteMatch) {
+        let data; try { data = await request.json(); } catch { return json({ error: "Invalid request body." }, 400); }
+        const [, clientId, noteId] = noteMatch;
+        const content = clean(data.content, 5000);
+        const visibility = data.visibility === "internal" ? "internal" : "client";
+        if (!content) return json({ error: "Note content is required." }, 400);
+        await env.DB.prepare("UPDATE client_notes SET content=?, visibility=?, updated_at=? WHERE id=? AND client_id=?")
+          .bind(content, visibility, new Date().toISOString(), noteId, clientId).run();
+        return json({ success: true });
+      }
+
+      const clientGoalsMatch = url.pathname.match(/^\/api\/admin\/clients\/(\d+)\/goals$/);
+      if (request.method === "POST" && clientGoalsMatch) {
+        let data; try { data = await request.json(); } catch { return json({ error: "Invalid request body." }, 400); }
+        const clientId = Number(clientGoalsMatch[1]);
+        const title = clean(data.title, 200);
+        if (!title) return json({ error: "Goal title is required." }, 400);
+        const description = clean(data.description, 2000);
+        const targetDate = clean(data.target_date, 40) || null;
+        const now = new Date().toISOString();
+        const result = await env.DB.prepare("INSERT INTO client_goals (client_id, title, description, target_date, status, created_at, updated_at) VALUES (?,?,?,?,'active',?,?)")
+          .bind(clientId, title, description, targetDate, now, now).run();
+        return json({ success: true, goal: { id: result.meta?.last_row_id, title, description, target_date: targetDate, status: "active", created_at: now } }, 201);
+      }
+
+      const goalMatch = url.pathname.match(/^\/api\/admin\/clients\/(\d+)\/goals\/(\d+)$/);
+      if (request.method === "PATCH" && goalMatch) {
+        let data; try { data = await request.json(); } catch { return json({ error: "Invalid request body." }, 400); }
+        const [, clientId, goalId] = goalMatch;
+        const allowedStatuses = ["active", "completed", "archived"];
+        const title = clean(data.title, 200);
+        const description = clean(data.description, 2000);
+        const targetDate = clean(data.target_date, 40) || null;
+        const status = allowedStatuses.includes(clean(data.status, 30)) ? clean(data.status, 30) : "active";
+        await env.DB.prepare("UPDATE client_goals SET title=?, description=?, target_date=?, status=?, updated_at=? WHERE id=? AND client_id=?")
+          .bind(title, description, targetDate, status, new Date().toISOString(), goalId, clientId).run();
+        return json({ success: true });
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/admin/call-requests") {
+        const status = clean(url.searchParams.get("status"), 30);
+        const clause = status ? " WHERE cr.status = ?" : "";
+        const bindings = status ? [status] : [];
+        const requests = await env.DB.prepare(`SELECT cr.id, cr.client_id, cr.reason, cr.preferred_time, cr.status, cr.scheduled_at, cr.coach_notes, cr.created_at,
+          c.name AS client_name, c.email AS client_email, c.phone AS client_phone
+          FROM call_requests cr JOIN clients c ON c.id = cr.client_id${clause} ORDER BY cr.created_at DESC LIMIT 200`).bind(...bindings).all();
+        return json({ call_requests: requests.results || [] });
+      }
+
+      const callRequestMatch = url.pathname.match(/^\/api\/admin\/call-requests\/(\d+)$/);
+      if (request.method === "PATCH" && callRequestMatch) {
+        let data; try { data = await request.json(); } catch { return json({ error: "Invalid request body." }, 400); }
+        const id = Number(callRequestMatch[1]);
+        const allowedStatuses = ["pending", "scheduled", "completed", "canceled"];
+        const status = allowedStatuses.includes(clean(data.status, 30)) ? clean(data.status, 30) : "pending";
+        const scheduledAt = clean(data.scheduled_at, 50) || null;
+        const coachNotes = clean(data.coach_notes, 5000);
+        await env.DB.prepare("UPDATE call_requests SET status=?, scheduled_at=?, coach_notes=?, updated_at=? WHERE id=?")
+          .bind(status, scheduledAt, coachNotes, new Date().toISOString(), id).run();
+        return json({ success: true });
+      }
+
+      const resetPasswordMatch = url.pathname.match(/^\/api\/admin\/clients\/(\d+)\/reset-password$/);
+      if (request.method === "POST" && resetPasswordMatch) {
+        const id = Number(resetPasswordMatch[1]);
+        const client = await findClientById(env, id);
+        if (!client) return json({ error: "Client not found." }, 404);
+        const token = await issueActivationToken(env, id);
+        return json({ success: true, activation_url: `https://liferise.cc/portal/activate.html?token=${token}` });
       }
 
       const leadMatch = url.pathname.match(/^\/api\/admin\/leads\/(\d+)$/);

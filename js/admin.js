@@ -17,6 +17,13 @@ const dialog=$('[data-lead-dialog]');
 let leads=[];
 let activeLead=null;
 
+const clientsTable=$('[data-clients-table]');
+const clientSearch=$('[data-client-search]');
+const clientDialog=$('[data-client-dialog]');
+let clients=[];
+let activeClient=null;
+let activeClientDetail=null;
+
 const esc=(value)=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const fmt=(value)=>value?new Date(value).toLocaleString():'—';
 const toLocalInput=(date)=>{
@@ -79,7 +86,125 @@ async function loadDashboard(){
   renderEvents(data.events||[]);
   populatePages(data.page_paths||[]);
   filterStatus.textContent=`Showing ${fmt(data.range?.from)} through ${fmt(data.range?.to)}${data.range?.page?` for ${data.range.page}`:''}.`;
+  loadClients().catch(()=>{});
 }
+
+const clientStatusLabels={trial:'Trial',active:'Active',past_due:'Past due',canceled:'Canceled'};
+
+function renderClients(rows){
+  clientsTable.innerHTML=rows.map(client=>`<tr><td><strong>${esc(client.name||'—')}</strong></td><td>${esc(client.email)}<br>${esc(client.phone||'')}</td><td><span class="status">${esc(clientStatusLabels[client.status]||client.status)}</span></td><td>${fmt(client.trial_ends_at)}</td><td>${Number(client.pending_call_requests||0)}</td><td>${fmt(client.last_login_at)}</td><td><button type="button" data-open-client="${client.id}">View</button></td></tr>`).join('')||'<tr><td colspan="7">No client accounts yet.</td></tr>';
+}
+
+async function loadClients(){
+  const data=await api('/api/admin/clients');
+  clients=data.clients||[];
+  renderClients(clients);
+}
+
+function renderClientGoals(goals){
+  const list=$('[data-client-goals-list]');
+  list.innerHTML=goals.length?goals.map(goal=>`<div class="goal-item" data-goal-id="${goal.id}"><strong>${esc(goal.title)}</strong>${goal.description?`<div>${esc(goal.description)}</div>`:''}<div class="meta">${goal.target_date?`Target: ${esc(goal.target_date)} · `:''}${esc(goal.status)}</div><select data-goal-status-select data-goal-id="${goal.id}"><option value="active"${goal.status==='active'?' selected':''}>Active</option><option value="completed"${goal.status==='completed'?' selected':''}>Completed</option><option value="archived"${goal.status==='archived'?' selected':''}>Archived</option></select></div>`).join(''):'<p class="empty-hint">No goals yet.</p>';
+}
+
+function renderClientNotes(notes){
+  const list=$('[data-client-notes-list]');
+  list.innerHTML=notes.length?notes.map(note=>`<div class="note-item"><div>${esc(note.content)}</div><div class="meta">${note.visibility==='internal'?'Internal only':'Visible to client'} · ${fmt(note.created_at)}</div></div>`).join(''):'<p class="empty-hint">No notes yet.</p>';
+}
+
+function renderClientCalls(callRequests){
+  const list=$('[data-client-calls-list]');
+  list.innerHTML=callRequests.length?callRequests.map(call=>`<div class="call-item" data-call-id="${call.id}"><strong>${esc(call.preferred_time||'Any time')}</strong>${call.reason?`<div>${esc(call.reason)}</div>`:''}<div class="meta">Requested ${fmt(call.created_at)}</div><select data-call-status-select data-call-id="${call.id}"><option value="pending"${call.status==='pending'?' selected':''}>Pending</option><option value="scheduled"${call.status==='scheduled'?' selected':''}>Scheduled</option><option value="completed"${call.status==='completed'?' selected':''}>Completed</option><option value="canceled"${call.status==='canceled'?' selected':''}>Canceled</option></select></div>`).join(''):'<p class="empty-hint">No call requests yet.</p>';
+}
+
+async function openClient(id){
+  activeClient=clients.find(c=>String(c.id)===String(id));
+  if(!activeClient)return;
+  const detail=await api(`/api/admin/clients/${id}`);
+  activeClientDetail=detail;
+  $('[data-client-title]').textContent=detail.client.name||detail.client.email;
+  $('[data-client-details]').innerHTML=[['Email',detail.client.email],['Phone',detail.client.phone],['Trial ends',fmt(detail.client.trial_ends_at)],['Created',fmt(detail.client.created_at)],['Last login',fmt(detail.client.last_login_at)]].map(([label,value])=>`<div><strong>${esc(label)}</strong>${esc(value||'—')}</div>`).join('');
+  $('[data-client-status]').value=detail.client.status||'trial';
+  $('[data-client-name]').value=detail.client.name||'';
+  $('[data-client-phone]').value=detail.client.phone||'';
+  $('[data-client-save-message]').hidden=true;
+  renderClientGoals(detail.goals||[]);
+  renderClientNotes(detail.notes||[]);
+  renderClientCalls(detail.call_requests||[]);
+  clientDialog.showModal();
+}
+
+clientsTable.addEventListener('click',event=>{
+  const button=event.target.closest('[data-open-client]');if(!button)return;
+  openClient(button.dataset.openClient);
+});
+
+clientSearch.addEventListener('input',()=>{
+  const q=clientSearch.value.trim().toLowerCase();
+  renderClients(!q?clients:clients.filter(client=>[client.name,client.email,client.phone,client.status].some(value=>String(value||'').toLowerCase().includes(q))));
+});
+
+$('[data-client-save]').addEventListener('click',async()=>{
+  if(!activeClient)return;
+  const message=$('[data-client-save-message]');message.hidden=false;message.textContent='Saving...';
+  try{
+    const updated=await api(`/api/admin/clients/${activeClient.id}`,{method:'PATCH',body:JSON.stringify({status:$('[data-client-status]').value,name:$('[data-client-name]').value,phone:$('[data-client-phone]').value})});
+    Object.assign(activeClient,updated.client);renderClients(clients);message.textContent='Saved.';
+  }catch(error){message.textContent=error.message;}
+});
+
+$('[data-client-reset-password]').addEventListener('click',async()=>{
+  if(!activeClient)return;
+  const message=$('[data-client-save-message]');message.hidden=false;message.textContent='Generating link...';
+  try{
+    const data=await api(`/api/admin/clients/${activeClient.id}/reset-password`,{method:'POST',body:'{}'});
+    message.textContent=`Share this link with the client: ${data.activation_url}`;
+    if(navigator.clipboard)navigator.clipboard.writeText(data.activation_url).catch(()=>{});
+  }catch(error){message.textContent=error.message;}
+});
+
+$('[data-goal-add]').addEventListener('click',async()=>{
+  if(!activeClient)return;
+  const wrap=$('[data-goal-form]');
+  const titleInput=wrap.querySelector('[data-goal-title]');
+  if(!titleInput.value.trim()){titleInput.focus();return;}
+  try{
+    await api(`/api/admin/clients/${activeClient.id}/goals`,{method:'POST',body:JSON.stringify({title:titleInput.value,description:wrap.querySelector('[data-goal-description]').value,target_date:wrap.querySelector('[data-goal-target-date]').value})});
+    wrap.querySelectorAll('input').forEach(input=>input.value='');
+    const detail=await api(`/api/admin/clients/${activeClient.id}`);
+    activeClientDetail=detail;renderClientGoals(detail.goals||[]);
+  }catch(error){alert(error.message);}
+});
+
+$('[data-note-add]').addEventListener('click',async()=>{
+  if(!activeClient)return;
+  const wrap=$('[data-note-form]');
+  const contentInput=wrap.querySelector('[data-note-content]');
+  if(!contentInput.value.trim()){contentInput.focus();return;}
+  try{
+    await api(`/api/admin/clients/${activeClient.id}/notes`,{method:'POST',body:JSON.stringify({content:contentInput.value,visibility:wrap.querySelector('[data-note-internal]').checked?'internal':'client'})});
+    contentInput.value='';
+    wrap.querySelector('[data-note-internal]').checked=false;
+    const detail=await api(`/api/admin/clients/${activeClient.id}`);
+    activeClientDetail=detail;renderClientNotes(detail.notes||[]);
+  }catch(error){alert(error.message);}
+});
+
+$('[data-client-goals-list]').addEventListener('change',async event=>{
+  const select=event.target.closest('[data-goal-status-select]');if(!select||!activeClient)return;
+  const goal=(activeClientDetail?.goals||[]).find(g=>String(g.id)===select.dataset.goalId);if(!goal)return;
+  try{
+    await api(`/api/admin/clients/${activeClient.id}/goals/${goal.id}`,{method:'PATCH',body:JSON.stringify({title:goal.title,description:goal.description,target_date:goal.target_date,status:select.value})});
+    goal.status=select.value;
+  }catch(error){alert(error.message);}
+});
+
+$('[data-client-calls-list]').addEventListener('change',async event=>{
+  const select=event.target.closest('[data-call-status-select]');if(!select)return;
+  try{
+    await api(`/api/admin/call-requests/${select.dataset.callId}`,{method:'PATCH',body:JSON.stringify({status:select.value})});
+    await loadClients();
+  }catch(error){alert(error.message);}
+});
 
 function setRange(hours){
   const now=new Date();

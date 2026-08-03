@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>My LifeRise Portal</title>
+  <meta name="robots" content="noindex,nofollow">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/portal.css">
+</head>
+<body>
+  <header class="portal-topbar">
+    <div class="wrap">
+      <div class="portal-brand">
+        <span class="brand-dot"></span>
+        <div><strong>LifeRise</strong><small>Client Portal</small></div>
+      </div>
+      <div class="top-actions">
+        <a href="/">Main site</a>
+        <button type="button" data-logout>Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="portal-main">
+    <div class="portal-hello">
+      <h1>Welcome back<span data-client-name-suffix></span><span class="status-pill" data-status-pill hidden></span></h1>
+      <p>Here's a look at your goals, notes from your coach, and everything you need to stay on track.</p>
+    </div>
+
+    <div class="portal-grid">
+      <div class="stack">
+        <section class="panel">
+          <h2>Your goals</h2>
+          <p class="panel-sub">Goals your coach has set with you.</p>
+          <div data-goals-list><p class="empty-state">Loading your goals…</p></div>
+        </section>
+
+        <section class="panel">
+          <h2>Notes from your coach</h2>
+          <p class="panel-sub">Updates and reflections shared with you.</p>
+          <div data-notes-list><p class="empty-state">Loading your notes…</p></div>
+        </section>
+
+        <section class="panel chat-panel">
+          <h2>Goal-coaching assistant</h2>
+          <p class="panel-sub">Chat about the goals your coach set for you — available any time.</p>
+          <div class="chat-log" data-chat-log></div>
+          <form class="chat-input-row" data-chat-form>
+            <input type="text" placeholder="Ask about your goals…" data-chat-input maxlength="2000" required>
+            <button type="submit">Send</button>
+          </form>
+        </section>
+      </div>
+
+      <div class="stack">
+        <section class="panel">
+          <h2>Request a call</h2>
+          <p class="panel-sub">Ask your coach to reach out.</p>
+          <form class="call-form" data-call-form>
+            <label for="preferredTime">Preferred time</label>
+            <input id="preferredTime" name="preferred_time" type="text" placeholder="e.g. Weekday evenings">
+            <label for="reason">What would you like to discuss?</label>
+            <textarea id="reason" name="reason" rows="3" placeholder="Optional details for your coach"></textarea>
+            <button type="submit">Request call</button>
+            <p class="form-message" data-call-message hidden></p>
+          </form>
+        </section>
+
+        <section class="panel">
+          <h2>Your call requests</h2>
+          <div data-call-requests-list><p class="empty-state">Loading…</p></div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <script src="js/portal-dashboard.js"></script>
+</body>
+</html>

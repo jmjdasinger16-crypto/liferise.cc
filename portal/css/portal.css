@@ -1,0 +1,92 @@
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:#f7f8fa;color:#0b1f33;font-family:Inter,sans-serif;min-height:100vh}
+a{color:inherit;text-decoration:none}
+
+/* ── Top bar (matches main site) ── */
+.portal-topbar{height:64px;background:#0b1f33;display:flex;align-items:center;position:sticky;top:0;z-index:20}
+.portal-topbar .wrap{width:min(1100px,calc(100% - 40px));margin:0 auto;display:flex;align-items:center;justify-content:space-between}
+.portal-brand{display:flex;align-items:center;gap:10px;color:#fff}
+.portal-brand .brand-dot{width:22px;height:22px;border-radius:50%;background:#d4af37;display:inline-block}
+.portal-brand strong{font:700 24px 'Cormorant Garamond',serif;letter-spacing:-.02em}
+.portal-brand small{display:block;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#c8cfd8;font-weight:700;margin-top:2px}
+.portal-topbar .top-actions{display:flex;align-items:center;gap:16px}
+.portal-topbar .top-actions a,.portal-topbar .top-actions button{color:#fff;font-size:13px;font-weight:700;background:none;border:1px solid rgba(255,255,255,.35);padding:9px 16px;cursor:pointer;border-radius:2px}
+.portal-topbar .top-actions button:hover,.portal-topbar .top-actions a:hover{background:rgba(255,255,255,.1)}
+
+/* ── Auth pages (login / activate) ── */
+.auth-shell{width:min(460px,calc(100% - 32px));margin:8vh auto;background:#fff;border:1px solid #dfe3e7;box-shadow:0 18px 50px #10203b14;padding:44px 40px}
+.auth-shell .brand-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.auth-shell .brand-dot{width:22px;height:22px;border-radius:50%;background:#d4af37;display:inline-block}
+.auth-shell .brand-row strong{font:700 24px 'Cormorant Garamond',serif}
+.auth-shell h1{font:700 34px 'Cormorant Garamond',serif;margin:22px 0 10px}
+.auth-shell p.lead{color:#66717d;margin:0 0 28px;line-height:1.5}
+.auth-shell label{display:block;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.09em;margin:20px 0 8px;color:#33404d}
+.auth-shell input{width:100%;padding:14px;border:1px solid #cfd6da;background:#fff;font:inherit}
+.auth-shell input:focus{outline:2px solid #0b1f33;outline-offset:1px}
+.auth-shell button[type=submit]{width:100%;border:0;background:#0b1f33;color:#fff;padding:16px;font-weight:800;cursor:pointer;margin-top:26px;letter-spacing:.02em}
+.auth-shell button[type=submit]:hover{background:#132a45}
+.auth-shell button[type=submit]:disabled{opacity:.6;cursor:not-allowed}
+.auth-shell .switch-link{margin-top:22px;text-align:center;font-size:14px;color:#66717d}
+.auth-shell .switch-link a{color:#0b1f33;font-weight:800;border-bottom:2px solid #d4af37}
+.form-message{margin-top:18px;padding:13px 15px;background:#eef6f1;border-left:4px solid #2e8b57;color:#40514a;font-size:14px;line-height:1.45}
+.form-message.error{background:#fbeceb;border-left-color:#b3372c;color:#7d271f}
+.auth-loading{text-align:center;color:#66717d;padding:40px 0}
+
+/* ── Dashboard shell ── */
+.portal-main{width:min(1080px,calc(100% - 32px));margin:38px auto 80px}
+.portal-hello h1{font:700 32px 'Cormorant Garamond',serif;margin:0 0 6px}
+.portal-hello p{color:#66717d;margin:0 0 30px}
+.status-pill{display:inline-block;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;vertical-align:middle;margin-left:10px}
+.status-pill.trial{background:#fff4dc;color:#8a6100}
+.status-pill.active{background:#e6f3ec;color:#1f6b45}
+.status-pill.past_due{background:#fbeceb;color:#8a2c22}
+.status-pill.canceled{background:#eceef0;color:#5a6672}
+
+.portal-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:26px}
+@media (max-width:860px){.portal-grid{grid-template-columns:1fr}}
+.stack{display:flex;flex-direction:column;gap:26px}
+
+.panel{background:#fff;border:1px solid #dfe3e7;box-shadow:0 14px 40px #10203b0f;padding:26px 28px}
+.panel h2{font:700 21px 'Cormorant Garamond',serif;margin:0 0 4px}
+.panel .panel-sub{color:#66717d;font-size:13px;margin:0 0 18px}
+
+/* Goals */
+.goal-card{border:1px solid #e5e8eb;border-left:4px solid #2e8b57;padding:14px 16px;margin-bottom:12px}
+.goal-card.completed{border-left-color:#9aa4ac;opacity:.72}
+.goal-card h3{margin:0 0 4px;font-size:15px;font-weight:800}
+.goal-card p{margin:0 0 6px;font-size:13.5px;color:#44505b;line-height:1.5}
+.goal-card .goal-meta{font-size:11.5px;color:#8993a0;text-transform:uppercase;letter-spacing:.05em;font-weight:700}
+.empty-state{color:#8993a0;font-size:14px;padding:14px 0}
+
+/* Notes */
+.note-card{padding:14px 0;border-bottom:1px solid #eceef0}
+.note-card:last-child{border-bottom:none}
+.note-card p{margin:0 0 6px;font-size:14px;line-height:1.55;white-space:pre-wrap}
+.note-card .note-meta{font-size:11.5px;color:#8993a0;text-transform:uppercase;letter-spacing:.05em;font-weight:700}
+
+/* Call request */
+.call-form label{display:block;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;margin:14px 0 7px;color:#33404d}
+.call-form input,.call-form textarea{width:100%;padding:12px;border:1px solid #cfd6da;font:inherit;background:#fff}
+.call-form button{margin-top:16px;border:0;background:#2e8b57;color:#fff;padding:13px 20px;font-weight:800;cursor:pointer}
+.call-form button:hover{background:#256e46}
+.call-form button:disabled{opacity:.6;cursor:not-allowed}
+.request-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #eceef0;font-size:13.5px}
+.request-row:last-child{border-bottom:none}
+.request-row .rq-status{font-weight:800;text-transform:uppercase;font-size:10.5px;letter-spacing:.06em;padding:3px 9px;border-radius:20px}
+.rq-status.pending{background:#fff4dc;color:#8a6100}
+.rq-status.scheduled{background:#e6f0fb;color:#1c4e8a}
+.rq-status.completed{background:#e6f3ec;color:#1f6b45}
+.rq-status.canceled{background:#eceef0;color:#5a6672}
+
+/* Chat */
+.chat-panel{display:flex;flex-direction:column;height:560px}
+.chat-log{flex:1;overflow-y:auto;padding-right:4px;margin-bottom:14px;display:flex;flex-direction:column;gap:12px}
+.chat-msg{max-width:85%;padding:11px 14px;border-radius:14px;font-size:14px;line-height:1.5}
+.chat-msg.user{align-self:flex-end;background:#0b1f33;color:#fff;border-radius:14px 14px 3px 14px}
+.chat-msg.assistant{align-self:flex-start;background:#f0f2f4;color:#232c35;border-radius:14px 14px 14px 3px}
+.chat-msg.pending{opacity:.6}
+.chat-input-row{display:flex;gap:10px}
+.chat-input-row input{flex:1;padding:13px;border:1px solid #cfd6da;font:inherit}
+.chat-input-row button{border:0;background:#0b1f33;color:#fff;padding:13px 20px;font-weight:800;cursor:pointer}
+.chat-input-row button:disabled{opacity:.6;cursor:not-allowed}

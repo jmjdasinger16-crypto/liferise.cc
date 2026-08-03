@@ -23,8 +23,15 @@ The LifeRise chat bubble calls `POST /api/chat`, handled by a Cloudflare Worker.
 
 - `ADMIN_PASSWORD`: secret for admin dashboard login.
 - `ADMIN_SESSION_SECRET`: secret for signing admin session cookies.
+- `CLIENT_SESSION_SECRET`: secret for signing client portal session cookies (`liferise_client`). Generate with `openssl rand -hex 32`.
+- `STRIPE_SECRET_KEY`: Stripe secret key (`sk_live_...` / `sk_test_...`) used to verify Checkout Sessions during client portal activation and to sync subscription status.
+- `STRIPE_WEBHOOK_SECRET`: signing secret (`whsec_...`) for the `POST /api/stripe/webhook` endpoint, used to verify incoming Stripe webhook events.
 
-No external AI API key is needed — Workers AI is used directly via the `env.AI` binding.
+Set all secrets with `npx wrangler secret put SECRET_NAME` from the `worker/` directory. No external AI API key is needed — Workers AI is used directly via the `env.AI` binding.
+
+## Client portal (trial signup → portal access)
+
+A client portal at `/portal/` becomes available once someone completes checkout on the Stripe trial payment link. See `worker/README.md` for the full setup (webhook events to enable, the exact "After payment" redirect URL to configure on the Payment Link, and the complete client-portal + admin-clients route list).
 
 ## Conversation stages
 
