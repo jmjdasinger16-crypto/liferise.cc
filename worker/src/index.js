@@ -4,7 +4,7 @@ const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const json = (body, status = 200, extraHeaders = {}) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...extraHeaders } });
 const clean = (value, max = 2000) => String(value ?? "").trim().slice(0, max);
 const validEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-const validPhone = (value) => value.replace(/\D/g, "").length >= 10;
+const validPhone = (value) => String(value ?? "").replace(/\D/g, "").length >= 10;
 const uuid = () => crypto.randomUUID();
 const encoder = new TextEncoder();
 
@@ -96,8 +96,9 @@ const safetyReply = "I'm really sorry you're facing this. Please call 911 or you
 const REQUIRED_FIELDS = ["area", "concern", "name", "phone", "email", "preferred_contact", "best_contact_time", "sms_consent"];
 
 function missingFields(c) {
+  const row = c || {};
   return REQUIRED_FIELDS.filter(f => {
-    const val = c[f];
+    const val = row[f];
     if (f === "sms_consent") return val !== 1;
     if (f === "email") return !validEmail(val);
     if (f === "phone") return !validPhone(val);
@@ -371,6 +372,7 @@ export default {
 
     /* ── AI-powered chat handler ── */
     if (request.method === "POST" && url.pathname === "/api/chat") {
+      try {
       let body; try { body = await request.json(); } catch { return json({ error: "Invalid request body." }, 400); }
       const conversationId = clean(body.conversation_id, 80) || uuid();
       const userMessage = clean(body.message, 2000);
@@ -476,6 +478,11 @@ export default {
       // ── Normal response ──
       await saveMessage(env, conversationId, "assistant", reply);
       return json({ conversation_id: conversationId, reply, options, lead_saved: Boolean(c.lead_id), show_checkout: false, stage: c.stage || "collecting" });
+      } catch (error) {
+        console.error("Chat handler error:", error);
+        const fallbackReply = "I'm here to help. Could you tell me a little about what's been on your mind?";
+        return json({ conversation_id: body?.conversation_id || uuid(), reply: fallbackReply, options: [], lead_saved: false, show_checkout: false, stage: "collecting" });
+      }
     }
 
     return json({ error: "Not found" }, 404);
