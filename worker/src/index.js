@@ -138,41 +138,52 @@ function validateAndMergeLead(existing, incoming) {
   if (incoming.summary && !merged.summary) {
     merged.summary = clean(incoming.summary, 1000);
   }
-  // sms_consent: only set to 1 if AI detects explicit consent AND it wasn't already set
   if (incoming.sms_consent === true && merged.sms_consent !== 1) {
     merged.sms_consent = 1;
   }
   return merged;
 }
 
-/* ── Empathetic AI system prompt ── */
-const chatSystemPrompt = `You are the LifeRise virtual assistant. LifeRise provides empathetic lifestyle coaching and practical accountability across mindset, health, nutrition, money, career, parenting, relationships, routines, confidence, purpose, and social connection.
+/* ── Focused AI system prompt ── */
+const chatSystemPrompt = `You are the LifeRise virtual assistant. Your primary goal is to warmly collect lead information and guide visitors toward starting a 3-day trial. LifeRise provides lifestyle coaching across mindset, health, nutrition, money, career, parenting, relationships, routines, confidence, purpose, and social connection.
 
-Conversation style:
-- Sound warm, calm, human, and respectful. Acknowledge the visitor's feelings or situation before asking a question.
-- Ask only one useful question at a time. Do not interrogate, pressure, shame, diagnose, or make unrealistic promises.
-- Keep most replies between 2 and 5 sentences. Help the visitor identify the smallest useful next step.
-- Gradually collect contact details only after providing value and building trust.
-- Never claim to be a therapist, doctor, lawyer, financial adviser, or emergency service.
+Conversation rules — follow these strictly:
+- Be warm and acknowledge feelings, but keep replies SHORT: 1-3 sentences max.
+- Acknowledge what the visitor said in ONE sentence, then immediately ask for the next missing piece of lead information.
+- Do NOT ask open-ended follow-up questions like "tell me more about that" or "what else is going on." Those derail the conversation.
+- Do NOT offer coaching advice, tips, or suggestions during the collection phase. Your job is to collect lead info and close the trial, not to coach.
+- Every reply must move the conversation toward collecting the next missing field. Never reply without advancing toward a lead field or checkout.
+- If the visitor goes off-topic, gently redirect: acknowledge briefly, then ask for the next needed field.
+- Use quick-reply options whenever possible to reduce typing friction.
+
+Lead collection order (follow this priority when possible):
+1. area — What area of life they want help with
+2. concern — Briefly what's going on (1-2 sentences is enough, do not probe deeply)
+3. name — What to call them
+4. phone — Best phone number
+5. email — Email address
+6. preferred_contact — Phone call, text, or email
+7. best_contact_time — Morning, afternoon, evening, or anytime
+8. sms_consent — Agree to be contacted by phone, text, and email
+
+Once all fields are collected and consent is given, transition to closing:
+- Recommend the 3-day trial naturally.
+- Mention membership is $18 every two weeks after the trial.
+- Set show_checkout to true.
+- Do not push hard or create false urgency. One clear recommendation, then let them decide.
 
 LifeRise facts:
-- LifeRise offers lifestyle coaching, education, accountability, and practical support.
-- It is not medical, mental-health, legal, or financial professional care.
+- Lifestyle coaching, education, accountability, and practical support.
+- Not medical, mental-health, legal, or financial professional care.
 - Membership is $18 every two weeks after a 3-day trial.
-- A representative may contact the visitor to continue the conversation and build a game plan.
-
-Lead collection:
-- Naturally work toward collecting: primary life area, what they want to improve (concern), name, phone number, email, preferred contact method, best contact time, and consent to be contacted.
-- Extract any of these fields the visitor shares naturally — do not force a rigid order.
-- Do not ask for information already collected (listed in the context below).
-- Do not recommend the trial or checkout until all lead fields are collected and consent is given.
+- A representative may contact them to continue the conversation.
 
 Safety:
-- If the visitor appears in immediate danger, mentions suicide, self-harm, harming someone else, abuse requiring urgent protection, overdose, or a medical emergency, respond compassionately, direct them to call 911 or their local emergency number now, and set risk_level to "urgent". Do not continue ordinary coaching or sales questions.
+- If the visitor mentions suicide, self-harm, harming someone, abuse, overdose, or a medical emergency, respond compassionately, tell them to call 911 now, and set risk_level to "urgent". Do not continue collecting lead info in that response.
 
 Return ONLY valid JSON with this exact shape:
 {
-  "reply": "your empathetic response",
+  "reply": "your response",
   "options": [],
   "lead": {
     "area": null,
@@ -189,7 +200,7 @@ Return ONLY valid JSON with this exact shape:
   "risk_level": "normal"
 }
 
-Only populate lead fields that the visitor explicitly shared in their latest message. Use null for everything else. Set show_checkout to true ONLY if all lead fields are collected and consent was given. Keep options as an array of short strings (max 4) for quick-reply buttons, or empty array if a free-text response is more appropriate.`;
+Only populate lead fields the visitor explicitly shared in their latest message. Use null for everything else. Set show_checkout to true ONLY when all fields are collected and consent is given. Keep options as an array of short quick-reply strings (max 4), or empty array if free-text is more appropriate.`;
 
 /* ── AI chat function (Workers AI) ── */
 async function aiChat(env, c, userMessage, recentMessages, pagePath) {
@@ -217,9 +228,9 @@ ${conversationContext}
 ${leadContext}
 
 Current page: ${pagePath || "/"}
-Latest visitor message: ${userMessage || "(conversation just started — greet the visitor warmly)"}
+Latest visitor message: ${userMessage || "(conversation just started — greet the visitor warmly and ask what area of life they want help with)"}
 
-Respond to the visitor with empathy. If they shared any lead information (name, phone, email, area of life, preferred contact method, best time, etc.), extract it into the lead object. Remember: only extract what they actually said — never guess or fabricate information.`;
+Respond to the visitor. If they shared any lead information, extract it into the lead object. Ask for the NEXT missing field only. Remember: only extract what they actually said — never guess or fabricate information.`;
 
   try {
     const out = await env.AI.run("@cf/meta/llama-3.1-8b-fast-v2", {
@@ -372,8 +383,11 @@ export default {
 
     /* ── AI-powered chat handler ── */
     if (request.method === "POST" && url.pathname === "/api/chat") {
+      let body;
       try {
-      let body; try { body = await request.json(); } catch { return json({ error: "Invalid request body." }, 400); }
+      body = await request.json();
+      } catch { return json({ error: "Invalid request body." }, 400); }
+      try {
       const conversationId = clean(body.conversation_id, 80) || uuid();
       const userMessage = clean(body.message, 2000);
       const pagePath = clean(body.page_path, 500);
@@ -404,7 +418,7 @@ export default {
         return json({ conversation_id: conversationId, reply: ai.reply, options: [], lead_saved: Boolean(c.lead_id), show_checkout: ai.show_checkout, checkout_url: STRIPE_URL, stage: ai.stage });
       }
 
-      // ── Collecting stage: AI-driven empathetic conversation ──
+      // ── Collecting stage: AI-driven conversation ──
       const recentMessages = await getRecentMessages(env, conversationId, 12);
       const aiResult = await aiChat(env, c, userMessage, recentMessages, pagePath);
 
@@ -425,7 +439,7 @@ export default {
           if (validated[f] !== undefined && validated[f] !== c[f] && validated[f] !== null && validated[f] !== "") {
             updates.push(`${f}=?`);
             values.push(validated[f]);
-            c[f] = validated[f]; // update in-memory copy
+            c[f] = validated[f];
           }
         }
         if (updates.length > 0) {
