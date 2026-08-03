@@ -89,6 +89,19 @@
           </table>
         </div>
       </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div><h2>Clients</h2><p>Enrolled client portal accounts, trial/subscription status, and pending call requests.</p></div>
+          <input type="search" placeholder="Search name, email, phone..." data-client-search>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Name</th><th>Contact</th><th>Status</th><th>Trial ends</th><th>Pending calls</th><th>Last login</th><th></th></tr></thead>
+            <tbody data-clients-table></tbody>
+          </table>
+        </div>
+      </section>
     </section>
   </main>
 
@@ -103,6 +116,56 @@
       <label>Internal notes<textarea rows="5" data-lead-notes></textarea></label>
       <button type="button" data-lead-save>Save changes</button>
       <p class="form-message" data-lead-save-message hidden></p>
+    </form>
+  </dialog>
+
+  <dialog data-client-dialog>
+    <form method="dialog" class="dialog-card client-dialog-card">
+      <button class="dialog-close" value="cancel" aria-label="Close">×</button>
+      <h2 data-client-title>Client details</h2>
+      <div class="detail-grid" data-client-details></div>
+
+      <label>Status
+        <select data-client-status>
+          <option value="trial">Trial</option>
+          <option value="active">Active</option>
+          <option value="past_due">Past due</option>
+          <option value="canceled">Canceled</option>
+        </select>
+      </label>
+      <label>Name<input data-client-name></label>
+      <label>Phone<input data-client-phone></label>
+      <button type="button" data-client-save>Save changes</button>
+      <button type="button" class="secondary" data-client-reset-password>Generate activation / reset-password link</button>
+      <p class="form-message" data-client-save-message hidden></p>
+
+      <div class="client-tabs">
+        <section class="client-subsection">
+          <h3>Goals</h3>
+          <div data-client-goals-list></div>
+          <div class="client-inline-form" data-goal-form>
+            <input type="text" placeholder="Goal title" data-goal-title required>
+            <input type="text" placeholder="Description (optional)" data-goal-description>
+            <input type="date" data-goal-target-date>
+            <button type="button" data-goal-add>Add goal</button>
+          </div>
+        </section>
+
+        <section class="client-subsection">
+          <h3>Notes</h3>
+          <div data-client-notes-list></div>
+          <div class="client-inline-form" data-note-form>
+            <textarea rows="3" placeholder="Write a note..." data-note-content required></textarea>
+            <label class="note-visibility"><input type="checkbox" data-note-internal> Internal only (not visible to client)</label>
+            <button type="button" data-note-add>Add note</button>
+          </div>
+        </section>
+
+        <section class="client-subsection">
+          <h3>Call requests</h3>
+          <div data-client-calls-list></div>
+        </section>
+      </div>
     </form>
   </dialog>
 

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Activate Your Account · LifeRise</title>
+  <meta name="robots" content="noindex,nofollow">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/portal.css">
+</head>
+<body>
+  <div class="auth-shell">
+    <div class="brand-row"><span class="brand-dot"></span><strong>LifeRise</strong></div>
+
+    <div data-activate-loading>
+      <h1>Setting up your portal</h1>
+      <p class="auth-loading">Verifying your account…</p>
+    </div>
+
+    <div data-activate-form hidden>
+      <h1>Welcome to LifeRise</h1>
+      <p class="lead" data-activate-lead>Create a password to finish setting up your client portal.</p>
+      <form data-set-password-form>
+        <label for="password">Create password</label>
+        <input id="password" name="password" type="password" minlength="8" autocomplete="new-password" required>
+        <label for="confirmPassword">Confirm password</label>
+        <input id="confirmPassword" name="confirmPassword" type="password" minlength="8" autocomplete="new-password" required>
+        <button type="submit">Activate my portal</button>
+        <p class="form-message" data-activate-message hidden></p>
+      </form>
+    </div>
+
+    <div data-activate-error hidden>
+      <h1>We hit a snag</h1>
+      <p class="form-message error" data-activate-error-text></p>
+      <p class="switch-link">Already have a password? <a href="index.html">Sign in</a></p>
+    </div>
+  </div>
+
+  <script src="js/portal-auth.js"></script>
+</body>
+</html>

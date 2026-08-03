@@ -107,6 +107,15 @@ function addArticlesNavigation(html) {
   });
 }
 
+
+function addClientPortalLink(html) {
+  return html.replace(/<div class="navright">([\s\S]*?)<\/div>/, (full, links) => {
+    if (/portal\//i.test(links) || />Client Login<\/a>/i.test(links)) return full;
+    const portalLink = '<a class="text-link" href="/portal/">Client Login</a>';
+    return `<div class="navright">${portalLink}${links}</div>`;
+  });
+}
+
 function sendJson(res, status, payload) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -409,7 +418,7 @@ function sendFile(res, filePath) {
       }
 
       const ext = path.extname(resolvedPath).toLowerCase();
-      const body = ext === '.html' ? Buffer.from(addArticlesNavigation(data.toString('utf8'))) : data;
+      const body = ext === '.html' ? Buffer.from(addClientPortalLink(addArticlesNavigation(data.toString('utf8')))) : data;
       res.writeHead(200, {
         'Content-Type': mimeTypes[ext] || 'application/octet-stream',
         'Cache-Control': ext === '.xml' ? 'no-cache' : 'public, max-age=300',
