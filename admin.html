@@ -58,7 +58,10 @@
       <section class="metric-grid" data-admin-metrics></section>
 
       <section class="panel">
-        <div class="panel-head"><div><h2>Page performance</h2><p>Every page path recorded by the site, including resource articles, is summarized here.</p></div></div>
+        <div class="panel-head">
+          <div><h2>Page performance</h2><p>Every page path recorded by the site, including resource articles, is summarized here.</p></div>
+          <div class="panel-actions"><button type="button" class="panel-toggle" data-panel-toggle aria-expanded="true">Minimize</button></div>
+        </div>
         <div class="table-wrap">
           <table>
             <thead><tr><th>Page</th><th>Views</th><th>Unique visitors</th><th>Last activity</th></tr></thead>
@@ -70,7 +73,10 @@
       <section class="panel">
         <div class="panel-head">
           <div><h2>Leads</h2><p>Search, review, and update coaching leads in the selected reporting window.</p></div>
-          <input type="search" placeholder="Search name, email, phone..." data-lead-search>
+          <div class="panel-actions">
+            <input type="search" placeholder="Search name, email, phone..." data-lead-search>
+            <button type="button" class="panel-toggle" data-panel-toggle aria-expanded="true">Minimize</button>
+          </div>
         </div>
         <div class="table-wrap">
           <table>
@@ -81,7 +87,10 @@
       </section>
 
       <section class="panel">
-        <div class="panel-head"><div><h2>Events</h2><p>Page views, chatbot activity, lead submissions, and Stripe clicks for the selected range.</p></div></div>
+        <div class="panel-head">
+          <div><h2>Events</h2><p>Page views, chatbot activity, lead submissions, and Stripe clicks for the selected range.</p></div>
+          <div class="panel-actions"><button type="button" class="panel-toggle" data-panel-toggle aria-expanded="true">Minimize</button></div>
+        </div>
         <div class="table-wrap">
           <table>
             <thead><tr><th>Event</th><th>Page</th><th>Session</th><th>Time</th></tr></thead>
@@ -93,7 +102,10 @@
       <section class="panel">
         <div class="panel-head">
           <div><h2>Clients</h2><p>Enrolled client portal accounts, trial/subscription status, and pending call requests.</p></div>
-          <input type="search" placeholder="Search name, email, phone..." data-client-search>
+          <div class="panel-actions">
+            <input type="search" placeholder="Search name, email, phone..." data-client-search>
+            <button type="button" class="panel-toggle" data-panel-toggle aria-expanded="true">Minimize</button>
+          </div>
         </div>
         <div class="table-wrap">
           <table>
@@ -107,7 +119,7 @@
 
   <dialog data-lead-dialog>
     <form method="dialog" class="dialog-card">
-      <button class="dialog-close" value="cancel" aria-label="Close">×</button>
+      <button class="dialog-close" value="cancel" aria-label="Close" formnovalidate>×</button>
       <h2 data-lead-title>Lead details</h2>
       <div class="detail-grid" data-lead-details></div>
       <label>Status<select data-lead-status><option value="new">New</option><option value="contacted">Contacted</option><option value="trial">Trial</option><option value="active">Active</option><option value="closed">Closed</option></select></label>
@@ -121,7 +133,7 @@
 
   <dialog data-client-dialog>
     <form method="dialog" class="dialog-card client-dialog-card">
-      <button class="dialog-close" value="cancel" aria-label="Close">×</button>
+      <button class="dialog-close" value="cancel" aria-label="Close" formnovalidate>×</button>
       <h2 data-client-title>Client details</h2>
       <div class="detail-grid" data-client-details></div>
 

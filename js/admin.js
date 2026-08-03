@@ -265,3 +265,33 @@ $('[data-lead-save]').addEventListener('click',async()=>{
 
 resetRange();
 loadDashboard().catch(()=>showLogin());
+
+const PANEL_COLLAPSE_KEY = 'liferise_admin_collapsed_panels';
+function getCollapsedPanels(){
+  try{return JSON.parse(localStorage.getItem(PANEL_COLLAPSE_KEY)||'{}');}catch{return {};}
+}
+function saveCollapsedPanels(state){
+  try{localStorage.setItem(PANEL_COLLAPSE_KEY,JSON.stringify(state));}catch{}
+}
+function panelKey(panel){
+  return (panel.querySelector('h2')?.textContent||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'-');
+}
+function setPanelCollapsed(panel,button,collapsed){
+  panel.classList.toggle('collapsed',collapsed);
+  button.textContent=collapsed?'Expand':'Minimize';
+  button.setAttribute('aria-expanded',String(!collapsed));
+}
+document.querySelectorAll('[data-panel-toggle]').forEach(button=>{
+  const panel=button.closest('.panel');
+  if(!panel)return;
+  const key=panelKey(panel);
+  const collapsedState=getCollapsedPanels();
+  setPanelCollapsed(panel,button,!!collapsedState[key]);
+  button.addEventListener('click',()=>{
+    const collapsed=!panel.classList.contains('collapsed');
+    setPanelCollapsed(panel,button,collapsed);
+    const state=getCollapsedPanels();
+    state[key]=collapsed;
+    saveCollapsedPanels(state);
+  });
+});
