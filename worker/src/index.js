@@ -1,4 +1,4 @@
-const STRIPE_URL = "https://buy.stripe.com/00wcN5dWdeyW03Y1g4ak000";
+const STRIPE_URL = "https://buy.stripe.com/5kQ00jdWd62q8Auf6Uak001";
 const SESSION_COOKIE = "liferise_admin";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const CLIENT_SESSION_COOKIE = "liferise_client";

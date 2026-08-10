@@ -40,7 +40,7 @@ The client portal unlocks automatically once someone completes checkout via your
    `https://liferise.cc/api/stripe/webhook`
    Subscribe to these events: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`.
    Copy the generated signing secret into `STRIPE_WEBHOOK_SECRET`.
-2. **Update the Payment Link's post-payment redirect.** In the Stripe Dashboard, edit the Payment Link (`https://buy.stripe.com/00wcN5dWdeyW03Y1g4ak000`) → **After payment** → choose "Redirect customers to your website" and set the URL to:
+2. **Update the Payment Link's post-payment redirect.** In the Stripe Dashboard, edit the Payment Link (`https://buy.stripe.com/5kQ00jdWd62q8Auf6Uak001`) → **After payment** → choose "Redirect customers to your website" and set the URL to:
    `https://liferise.cc/portal/activate.html?session_id={CHECKOUT_SESSION_ID}`
    Stripe automatically substitutes `{CHECKOUT_SESSION_ID}` with the real session ID on redirect — this is a supported, documented Stripe feature.
 3. Once a customer pays, the webhook creates a `clients` row (status `trial`, 3-day trial), and the redirect lets them set a password immediately at `/portal/activate.html`. If they close the browser before setting a password, an admin can generate a fresh activation link at any time from **Admin → Clients → Reset password** (`POST /api/admin/clients/:id/reset-password`), which returns a shareable `https://liferise.cc/portal/activate.html?token=...` link.
