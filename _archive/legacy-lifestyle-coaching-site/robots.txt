@@ -1,5 +1,4 @@
 User-agent: *
 Allow: /
-Disallow: /_archive/
 
 Sitemap: https://liferise.cc/sitemap.xml
