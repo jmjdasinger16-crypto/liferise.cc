@@ -8,14 +8,40 @@ h1,h2,h3{font-family:'Cormorant Garamond',serif;font-weight:700;line-height:1.15
 em{font-style:italic;color:#d4af37}
 
 header{height:84px;position:sticky;top:0;z-index:20;background:rgba(247,248,250,.95);border-bottom:1px solid #dfe3e7;backdrop-filter:blur(10px)}
-.nav{height:100%;display:flex;align-items:center;justify-content:space-between}
-.brand{display:flex;align-items:center}
+.nav{height:100%;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.brand{display:flex;align-items:center;flex-shrink:0}
 .brand-logo{height:44px;width:auto}
 nav.links{display:flex;gap:28px}
-nav.links a{font-size:14px;font-weight:600;letter-spacing:.02em;color:#0b1f33;opacity:.85}
+nav.links a{font-size:14px;font-weight:600;letter-spacing:.02em;color:#0b1f33;opacity:.85;white-space:nowrap}
 nav.links a:hover,nav.links a.active{opacity:1;color:#a8842a}
-.navright a{background:#0b1f33;color:#fff;padding:10px 20px;border-radius:999px;font-size:13px;font-weight:700;letter-spacing:.03em}
+.navright{flex-shrink:0}
+.navright a{display:inline-block;background:#0b1f33;color:#fff;padding:10px 20px;border-radius:999px;font-size:13px;font-weight:700;letter-spacing:.03em;white-space:nowrap}
 .navright a:hover{background:#16324f}
+
+.nav-toggle{display:none;flex-direction:column;justify-content:center;gap:5px;width:32px;height:32px;padding:0;background:none;border:0;cursor:pointer;flex-shrink:0}
+.nav-toggle span{display:block;width:100%;height:2px;background:#0b1f33;border-radius:2px;transition:transform .2s,opacity .2s}
+header.nav-open .nav-toggle span:nth-child(1){transform:translateY(7px) rotate(45deg)}
+header.nav-open .nav-toggle span:nth-child(2){opacity:0}
+header.nav-open .nav-toggle span:nth-child(3){transform:translateY(-7px) rotate(-45deg)}
+
+@media (max-width:768px){
+  header{height:68px;overflow:visible}
+  .brand-logo{height:36px}
+  .nav-toggle{display:flex}
+  .nav-menu{
+    position:absolute;left:0;right:0;top:68px;
+    display:flex;flex-direction:column;align-items:stretch;
+    background:#f7f8fa;border-bottom:1px solid #dfe3e7;
+    max-height:0;overflow:hidden;opacity:0;visibility:hidden;
+    transition:max-height .25s ease,opacity .2s ease;
+  }
+  nav.links{flex-direction:column;gap:0;padding:8px 24px 0}
+  nav.links a{padding:14px 0;border-bottom:1px solid #e3e7eb;width:100%}
+  .navright{padding:16px 24px 24px;text-align:center}
+  .navright a{display:block;width:100%;padding:12px 0}
+  header.nav-open .nav-menu{max-height:80vh;opacity:1;visibility:visible;overflow-y:auto}
+  header.nav-open{background:#f7f8fa}
+}
 
 .hero{padding:88px 0 64px;text-align:center;background:linear-gradient(180deg,#0b1f33 0%,#122a45 100%);color:#fff}
 .hero .wrap{max-width:760px}
